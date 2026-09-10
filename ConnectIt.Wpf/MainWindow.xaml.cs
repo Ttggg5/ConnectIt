@@ -1,110 +1,322 @@
 using System.Collections.ObjectModel;
 using System.Linq;
-using System.Net.Sockets;
+using System.Net;
 using System.Windows;
+using System.Windows.Controls;
+using System.Windows.Input;
+using System.Windows.Media;
 using ConnectIt.Wpf.Models;
 using ConnectIt.Wpf.Services;
+using MaterialDesignThemes.Wpf;
 
 namespace ConnectIt.Wpf;
 
 public partial class MainWindow : Window
 {
+    private static readonly TimeSpan AutoSearchDuration = TimeSpan.FromSeconds(30);
+
+    // 搜尋期間內每隔幾秒就重送一次查詢,而不是只查一次就等 30 秒。
+    // 兩台裝置如果幾乎同時啟動,單次查詢很容易在對方還沒完成廣播註冊前就送出而互相找不到對方,
+    // 定期重試可以避開這種啟動時機的競爭問題。
+    private static readonly TimeSpan SearchQueryInterval = TimeSpan.FromSeconds(3);
+
     private readonly MdnsDiscoveryService _discovery = new();
     private readonly ConnectionService _connection = new();
     private readonly ObservableCollection<DiscoveredDevice> _devices = new();
 
-    private bool _isAdvertising;
+    private CancellationTokenSource? _searchCts;
 
     public MainWindow()
     {
         InitializeComponent();
 
-        DevicesListView.ItemsSource = _devices;
+        DevicesItemsControl.ItemsSource = _devices;
+        _devices.CollectionChanged += (_, _) => UpdateEmptyState();
         DeviceNameTextBox.Text = Environment.MachineName;
+        MainSnackbar.MessageQueue = new SnackbarMessageQueue(TimeSpan.FromSeconds(3));
 
         _discovery.DeviceDiscovered += OnDeviceDiscovered;
         _discovery.DeviceRemoved += OnDeviceRemoved;
         _discovery.StatusChanged += OnServiceStatusChanged;
         _connection.StatusChanged += OnServiceStatusChanged;
-        _connection.ClientConnected += OnClientConnected;
+        _connection.ConnectionRequested += OnConnectionRequested;
+        _connection.Connected += OnConnected;
+        _connection.RemoteDisconnected += OnRemoteDisconnected;
 
-        Loaded += (_, _) =>
-        {
-            _discovery.Start();
-            _discovery.Refresh();
-        };
-
+        Loaded += MainWindow_Loaded;
         Closed += (_, _) =>
         {
+            _searchCts?.Cancel();
             _discovery.Dispose();
             _connection.Dispose();
         };
     }
 
-    private void ToggleAdvertiseButton_Click(object sender, RoutedEventArgs e)
+    private void MainWindow_Loaded(object sender, RoutedEventArgs e)
     {
-        if (!_isAdvertising)
+        // 一開機就自動廣播、自動開始監聽,不需要使用者手動按按鈕。
+        _discovery.Start();
+        _connection.StartListening();
+        AdvertiseCurrentName();
+
+        StartSearchCycle();
+    }
+
+    private void AdvertiseCurrentName()
+    {
+        var name = string.IsNullOrWhiteSpace(DeviceNameTextBox.Text)
+            ? Environment.MachineName
+            : DeviceNameTextBox.Text.Trim();
+
+        _discovery.Advertise(name, _connection.Port);
+    }
+
+    private void DeviceNameTextBox_KeyDown(object sender, KeyEventArgs e)
+    {
+        if (e.Key == Key.Enter)
         {
-            var deviceName = string.IsNullOrWhiteSpace(DeviceNameTextBox.Text)
-                ? Environment.MachineName
-                : DeviceNameTextBox.Text.Trim();
-
-            var port = _connection.StartListening();
-            _discovery.Advertise(deviceName, port);
-
-            _isAdvertising = true;
-            ToggleAdvertiseButton.Content = "停止廣播";
-            AdvertiseStatusText.Text = $"廣播中,連接埠 {port}";
-            DeviceNameTextBox.IsEnabled = false;
+            AdvertiseCurrentName();
+            Keyboard_ClearFocus();
         }
-        else
+    }
+
+    private void DeviceNameTextBox_LostFocus(object sender, RoutedEventArgs e) => AdvertiseCurrentName();
+
+    private void Keyboard_ClearFocus() => FocusManager.SetFocusedElement(FocusManager.GetFocusScope(this), null);
+
+    /// <summary>自動搜尋 30 秒後停止,並顯示手動重新整理按鈕。</summary>
+    private void StartSearchCycle()
+    {
+        _searchCts?.Cancel();
+        var cts = new CancellationTokenSource();
+        _searchCts = cts;
+
+        RefreshButton.Visibility = Visibility.Collapsed;
+        SearchProgressBar.Visibility = Visibility.Visible;
+        SearchStatusText.Text = "正在搜尋裝置...";
+        UpdateEmptyState();
+
+        _ = RunSearchCycleAsync(cts);
+    }
+
+    private async Task RunSearchCycleAsync(CancellationTokenSource cts)
+    {
+        var deadline = DateTime.UtcNow + AutoSearchDuration;
+
+        try
         {
-            _discovery.StopAdvertising();
-            _connection.StopListening();
+            while (true)
+            {
+                _discovery.Refresh();
 
-            _isAdvertising = false;
-            ToggleAdvertiseButton.Content = "開始廣播並監聽";
-            AdvertiseStatusText.Text = string.Empty;
-            DeviceNameTextBox.IsEnabled = true;
+                var remaining = deadline - DateTime.UtcNow;
+                if (remaining <= TimeSpan.Zero)
+                {
+                    break;
+                }
+
+                await Task.Delay(remaining < SearchQueryInterval ? remaining : SearchQueryInterval, cts.Token);
+            }
         }
+        catch (OperationCanceledException)
+        {
+            return; // 被新的搜尋週期或斷線流程取消,不用再處理
+        }
+
+        if (cts.IsCancellationRequested)
+        {
+            return;
+        }
+
+        SearchProgressBar.Visibility = Visibility.Collapsed;
+        SearchStatusText.Text = "搜尋已停止";
+        RefreshButton.Visibility = Visibility.Visible;
+        UpdateEmptyState();
     }
 
     private void RefreshButton_Click(object sender, RoutedEventArgs e)
     {
         _devices.Clear();
-        _discovery.Refresh();
+        StartSearchCycle();
     }
 
-    private void DevicesListView_SelectionChanged(object sender, System.Windows.Controls.SelectionChangedEventArgs e)
+    private void UpdateEmptyState()
     {
-        ConnectButton.IsEnabled = DevicesListView.SelectedItem is DiscoveredDevice;
+        var searching = SearchProgressBar.Visibility == Visibility.Visible;
+        EmptyStateStackPanel.Visibility = !searching && _devices.Count == 0
+            ? Visibility.Visible
+            : Visibility.Collapsed;
     }
 
-    private async void ConnectButton_Click(object sender, RoutedEventArgs e)
+    private async void ConnectToDevice_Click(object sender, RoutedEventArgs e)
     {
-        if (DevicesListView.SelectedItem is not DiscoveredDevice device)
+        if (sender is not Button { Tag: DiscoveredDevice device } button)
         {
             return;
         }
 
-        ConnectButton.IsEnabled = false;
+        button.IsEnabled = false;
         try
         {
-            AppendLog($"正在連線到 {device.DisplayName} ({device.Address}:{device.Port}) ...");
-            using var client = await _connection.ConnectAsync(device.Address, device.Port);
-            AppendLog($"已成功連線到 {device.DisplayName}。");
-            MessageBox.Show(this, $"已成功連線到 {device.DisplayName}\n({device.Address}:{device.Port})",
-                "連線成功", MessageBoxButton.OK, MessageBoxImage.Information);
-        }
-        catch (SocketException ex)
-        {
-            AppendLog($"連線失敗:{ex.Message}");
-            MessageBox.Show(this, $"連線失敗:{ex.Message}", "連線錯誤", MessageBoxButton.OK, MessageBoxImage.Error);
+            var myName = string.IsNullOrWhiteSpace(DeviceNameTextBox.Text)
+                ? Environment.MachineName
+                : DeviceNameTextBox.Text.Trim();
+
+            var accepted = await _connection.RequestConnectionAsync(device.Address, device.Port, myName, device.DisplayName);
+            if (!accepted)
+            {
+                MainSnackbar.MessageQueue?.Enqueue($"{device.DisplayName} 未接受連線請求。");
+            }
         }
         finally
         {
-            ConnectButton.IsEnabled = DevicesListView.SelectedItem is DiscoveredDevice;
+            button.IsEnabled = true;
         }
+    }
+
+    private void OnConnectionRequested(object? sender, ConnectionRequestedEventArgs e)
+    {
+        // 這裡是從背景執行緒(TCP accept loop)呼叫過來的,所以要排到 UI 執行緒上處理。
+        // 用 BeginInvoke(排入訊息佇列,非阻塞)而不是 Invoke(從背景執行緒同步阻塞呼叫) ——
+        // 後者會讓 DialogHost 的顯示動畫/版面更新在一個「巢狀」的 Dispatcher 呼叫裡執行,
+        // 曾經遇過這樣子彈窗背景會變暗但內容一直不畫出來的狀況;
+        // 用 BeginInvoke 讓它變成一般排隊的 UI 操作,行為就跟一般 Click 事件叫出對話框一樣正常。
+        Dispatcher.BeginInvoke(() =>
+        {
+            var dialogResultTask = ShowConnectionRequestDialog(e.RequesterName, e.RequesterAddress);
+            _ = RespondWhenDialogClosedAsync(dialogResultTask, e);
+        });
+    }
+
+    private static async Task RespondWhenDialogClosedAsync(Task<bool> dialogResultTask, ConnectionRequestedEventArgs e)
+    {
+        bool accepted;
+        try
+        {
+            accepted = await dialogResultTask;
+        }
+        catch
+        {
+            accepted = false;
+        }
+
+        e.Respond(accepted);
+    }
+
+    /// <summary>必須在 UI 執行緒上呼叫。同步建立並顯示確認對話框,回傳使用者按下按鈕後才會完成的 Task。</summary>
+    private Task<bool> ShowConnectionRequestDialog(string requesterName, IPAddress address)
+    {
+        var panel = new StackPanel { MinWidth = 280, HorizontalAlignment = HorizontalAlignment.Center };
+        panel.Children.Add(new PackIcon
+        {
+            Kind = PackIconKind.AccountQuestion,
+            Width = 40,
+            Height = 40,
+            HorizontalAlignment = HorizontalAlignment.Center,
+            Foreground = (Brush)FindResource("MaterialDesign.Brush.Primary"),
+        });
+        panel.Children.Add(new TextBlock
+        {
+            Text = $"「{requesterName}」想要與你連線",
+            FontSize = 16,
+            FontWeight = FontWeights.Medium,
+            TextWrapping = TextWrapping.Wrap,
+            TextAlignment = TextAlignment.Center,
+            Margin = new Thickness(0, 16, 0, 4),
+        });
+        panel.Children.Add(new TextBlock
+        {
+            Text = address.ToString(),
+            Opacity = 0.6,
+            FontSize = 12,
+            HorizontalAlignment = HorizontalAlignment.Center,
+            Margin = new Thickness(0, 0, 0, 20),
+        });
+
+        var buttonPanel = new StackPanel { Orientation = Orientation.Horizontal, HorizontalAlignment = HorizontalAlignment.Center };
+        var rejectButton = new Button
+        {
+            Content = "拒絕",
+            Style = (Style)FindResource("MaterialDesignFlatButton"),
+            Margin = new Thickness(0, 0, 8, 0),
+        };
+        var acceptButton = new Button
+        {
+            Content = "接受",
+            Style = (Style)FindResource("MaterialDesignRaisedButton"),
+        };
+        System.Windows.Automation.AutomationProperties.SetAutomationId(rejectButton, "RejectConnectionButton");
+        System.Windows.Automation.AutomationProperties.SetAutomationId(acceptButton, "AcceptConnectionButton");
+        buttonPanel.Children.Add(rejectButton);
+        buttonPanel.Children.Add(acceptButton);
+        panel.Children.Add(buttonPanel);
+
+        var tcs = new TaskCompletionSource<bool>();
+        rejectButton.Click += (_, _) =>
+        {
+            DialogHost.Close("RootDialog");
+            tcs.TrySetResult(false);
+        };
+        acceptButton.Click += (_, _) =>
+        {
+            DialogHost.Close("RootDialog");
+            tcs.TrySetResult(true);
+        };
+
+        var card = new Border
+        {
+            Background = (Brush)FindResource("MaterialDesignPaper"),
+            CornerRadius = new CornerRadius(4),
+            Padding = new Thickness(24),
+            HorizontalAlignment = HorizontalAlignment.Center,
+            VerticalAlignment = VerticalAlignment.Center,
+            Child = panel,
+        };
+
+        _ = DialogHost.Show(card, "RootDialog");
+        return tcs.Task;
+    }
+
+    private void OnConnected(object? sender, ConnectedEventArgs e)
+    {
+        Dispatcher.Invoke(() =>
+        {
+            _searchCts?.Cancel();
+
+            ConnectedDeviceNameText.Text = e.RemoteName;
+            DiscoveryViewRoot.Visibility = Visibility.Collapsed;
+            ConnectedViewRoot.Visibility = Visibility.Visible;
+
+            AppendLog($"已與 {e.RemoteName} ({e.RemoteAddress}) 建立連線。");
+        });
+    }
+
+    private void DisconnectButton_Click(object sender, RoutedEventArgs e)
+    {
+        _connection.Disconnect();
+        ReturnToDiscoveryView("已中斷連線。");
+    }
+
+    private void OnRemoteDisconnected(object? sender, EventArgs e)
+    {
+        Dispatcher.Invoke(() =>
+        {
+            MainSnackbar.MessageQueue?.Enqueue("對方已中斷連線。");
+            ReturnToDiscoveryView("對方已中斷連線。");
+        });
+    }
+
+    /// <summary>不管是自己按了中斷連線,還是對方把連線關掉,都回到搜尋畫面並重新開始廣播/搜尋。</summary>
+    private void ReturnToDiscoveryView(string logMessage)
+    {
+        ConnectedViewRoot.Visibility = Visibility.Collapsed;
+        DiscoveryViewRoot.Visibility = Visibility.Visible;
+
+        _devices.Clear();
+        AdvertiseCurrentName();
+        StartSearchCycle();
+
+        AppendLog(logMessage);
     }
 
     private void OnDeviceDiscovered(object? sender, DiscoveredDevice device)
@@ -136,11 +348,6 @@ public partial class MainWindow : Window
                 AppendLog($"裝置已離線:{existing.DisplayName}");
             }
         });
-    }
-
-    private void OnClientConnected(object? sender, TcpClient client)
-    {
-        Dispatcher.Invoke(() => AppendLog($"接受來自 {client.Client.RemoteEndPoint} 的連入連線。"));
     }
 
     private void OnServiceStatusChanged(object? sender, string message)

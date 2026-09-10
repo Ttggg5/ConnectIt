@@ -4,59 +4,159 @@
         xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
         xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
         xmlns:local="clr-namespace:ConnectIt.Wpf"
+        xmlns:materialDesign="http://materialdesigninxaml.net/winfx/xaml/themes"
         mc:Ignorable="d"
-        Title="ConnectIt - 裝置探索" Height="520" Width="720"
-        MinHeight="420" MinWidth="600">
-    <Grid Margin="12">
-        <Grid.RowDefinitions>
-            <RowDefinition Height="Auto"/>
-            <RowDefinition Height="Auto"/>
-            <RowDefinition Height="*"/>
-            <RowDefinition Height="140"/>
-        </Grid.RowDefinitions>
+        Title="ConnectIt" Height="600" Width="760"
+        MinHeight="480" MinWidth="640"
+        Background="{DynamicResource MaterialDesignPaper}"
+        TextElement.Foreground="{DynamicResource MaterialDesignBody}"
+        TextElement.FontWeight="Regular"
+        TextElement.FontSize="13"
+        FontFamily="{DynamicResource MaterialDesignFont}">
+    <materialDesign:DialogHost x:Name="RootDialogHost" Identifier="RootDialog">
+        <Grid>
+            <!-- ===================== 裝置探索畫面 ===================== -->
+            <Grid x:Name="DiscoveryViewRoot" Margin="16">
+                <Grid.RowDefinitions>
+                    <RowDefinition Height="Auto"/>
+                    <RowDefinition Height="Auto"/>
+                    <RowDefinition Height="*"/>
+                    <RowDefinition Height="Auto"/>
+                </Grid.RowDefinitions>
 
-        <!-- 本機廣播設定 -->
-        <GroupBox Header="本機裝置(廣播讓其他裝置找到你)" Grid.Row="0" Margin="0,0,0,8">
-            <StackPanel Orientation="Horizontal" Margin="8">
-                <TextBlock Text="裝置名稱:" VerticalAlignment="Center" Margin="0,0,6,0"/>
-                <TextBox x:Name="DeviceNameTextBox" Width="200" VerticalAlignment="Center"/>
-                <Button x:Name="ToggleAdvertiseButton" AutomationProperties.AutomationId="ToggleAdvertiseButton"
-                        Content="開始廣播並監聽"
-                        Margin="12,0,0,0" Padding="10,4" Click="ToggleAdvertiseButton_Click"/>
-                <TextBlock x:Name="AdvertiseStatusText" AutomationProperties.AutomationId="AdvertiseStatusText"
-                           VerticalAlignment="Center" Margin="12,0,0,0" Foreground="Gray"/>
-            </StackPanel>
-        </GroupBox>
+                <materialDesign:Card Grid.Row="0" Padding="16" Margin="0,0,0,12">
+                    <StackPanel Orientation="Horizontal">
+                        <materialDesign:PackIcon Kind="Laptop" Width="32" Height="32"
+                                                  VerticalAlignment="Center"
+                                                  Foreground="{DynamicResource MaterialDesign.Brush.Primary}"/>
+                        <StackPanel Margin="12,0,0,0" VerticalAlignment="Center">
+                            <TextBlock Text="ConnectIt" FontSize="20" FontWeight="Bold"/>
+                            <TextBlock Text="裝置探索與連線" Opacity="0.6" FontSize="12"/>
+                        </StackPanel>
 
-        <!-- 搜尋控制 -->
-        <DockPanel Grid.Row="1" Margin="0,0,0,8">
-            <Button x:Name="RefreshButton" AutomationProperties.AutomationId="RefreshButton"
-                    Content="重新搜尋裝置" DockPanel.Dock="Left"
-                    Padding="10,4" Click="RefreshButton_Click"/>
-            <Button x:Name="ConnectButton" Content="連線到選取的裝置" DockPanel.Dock="Right"
-                    Padding="10,4" Click="ConnectButton_Click" IsEnabled="False"/>
-            <TextBlock Text="搜尋到的裝置:" VerticalAlignment="Center" Margin="12,0"/>
-        </DockPanel>
+                        <TextBox x:Name="DeviceNameTextBox"
+                                 materialDesign:HintAssist.Hint="裝置名稱"
+                                 Style="{StaticResource MaterialDesignOutlinedTextBox}"
+                                 Width="200" Margin="24,0,0,0" VerticalAlignment="Center"
+                                 KeyDown="DeviceNameTextBox_KeyDown"
+                                 LostFocus="DeviceNameTextBox_LostFocus"/>
 
-        <!-- 裝置清單 -->
-        <ListView x:Name="DevicesListView" AutomationProperties.AutomationId="DevicesListView"
-                  Grid.Row="2" Margin="0,0,0,8"
-                  SelectionChanged="DevicesListView_SelectionChanged">
-            <ListView.View>
-                <GridView>
-                    <GridViewColumn Header="裝置名稱" Width="220" DisplayMemberBinding="{Binding DisplayName}"/>
-                    <GridViewColumn Header="IP 位址" Width="160" DisplayMemberBinding="{Binding Address}"/>
-                    <GridViewColumn Header="連接埠" Width="80" DisplayMemberBinding="{Binding Port}"/>
-                    <GridViewColumn Header="主機名稱" Width="200" DisplayMemberBinding="{Binding HostName}"/>
-                </GridView>
-            </ListView.View>
-        </ListView>
+                        <materialDesign:Chip Content="廣播中" Margin="16,0,0,0" VerticalAlignment="Center"
+                                              Background="{DynamicResource MaterialDesign.Brush.Primary.Light}"
+                                              Foreground="{DynamicResource MaterialDesign.Brush.Primary.Light.Foreground}">
+                            <materialDesign:Chip.Icon>
+                                <materialDesign:PackIcon Kind="Wifi"/>
+                            </materialDesign:Chip.Icon>
+                        </materialDesign:Chip>
+                    </StackPanel>
+                </materialDesign:Card>
 
-        <!-- 狀態紀錄 -->
-        <GroupBox Header="狀態紀錄" Grid.Row="3">
-            <TextBox x:Name="LogTextBox" AutomationProperties.AutomationId="LogTextBox"
-                     IsReadOnly="True" TextWrapping="Wrap"
-                     VerticalScrollBarVisibility="Auto" FontFamily="Consolas" FontSize="11"/>
-        </GroupBox>
-    </Grid>
+                <Grid Grid.Row="1" Margin="4,0,4,8">
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="*"/>
+                        <ColumnDefinition Width="Auto"/>
+                    </Grid.ColumnDefinitions>
+
+                    <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
+                        <ProgressBar x:Name="SearchProgressBar"
+                                     Style="{StaticResource MaterialDesignCircularProgressBar}"
+                                     IsIndeterminate="True" Width="20" Height="20"/>
+                        <TextBlock x:Name="SearchStatusText" Text="正在搜尋裝置..."
+                                   Margin="12,0,0,0" VerticalAlignment="Center" Opacity="0.7"/>
+                    </StackPanel>
+
+                    <Button x:Name="RefreshButton" AutomationProperties.AutomationId="RefreshButton" Grid.Column="1"
+                            Style="{StaticResource MaterialDesignIconButton}"
+                            ToolTip="重新搜尋裝置" Visibility="Collapsed"
+                            Click="RefreshButton_Click">
+                        <materialDesign:PackIcon Kind="Refresh" Width="22" Height="22"/>
+                    </Button>
+                </Grid>
+
+                <Grid Grid.Row="2">
+                    <ScrollViewer VerticalScrollBarVisibility="Auto">
+                        <ItemsControl x:Name="DevicesItemsControl">
+                            <ItemsControl.ItemTemplate>
+                                <DataTemplate>
+                                    <materialDesign:Card Margin="4,4,4,4" Padding="12">
+                                        <Grid>
+                                            <Grid.ColumnDefinitions>
+                                                <ColumnDefinition Width="Auto"/>
+                                                <ColumnDefinition Width="*"/>
+                                                <ColumnDefinition Width="Auto"/>
+                                            </Grid.ColumnDefinitions>
+
+                                            <materialDesign:PackIcon Grid.Column="0" Kind="Devices"
+                                                                      Width="28" Height="28"
+                                                                      VerticalAlignment="Center"
+                                                                      Foreground="{DynamicResource MaterialDesign.Brush.Primary}"/>
+
+                                            <StackPanel Grid.Column="1" Margin="12,0" VerticalAlignment="Center">
+                                                <TextBlock Text="{Binding DisplayName}" FontWeight="Medium" FontSize="15"/>
+                                                <TextBlock Opacity="0.6" FontSize="11">
+                                                    <Run Text="{Binding Address, Mode=OneWay}"/>
+                                                    <Run Text=":"/>
+                                                    <Run Text="{Binding Port, Mode=OneWay}"/>
+                                                </TextBlock>
+                                            </StackPanel>
+
+                                            <Button Grid.Column="2"
+                                                    AutomationProperties.AutomationId="ConnectButton"
+                                                    Style="{StaticResource MaterialDesignRaisedLightButton}"
+                                                    Tag="{Binding}"
+                                                    Click="ConnectToDevice_Click">
+                                                <StackPanel Orientation="Horizontal">
+                                                    <materialDesign:PackIcon Kind="LanConnect" Margin="0,0,6,0"/>
+                                                    <TextBlock Text="連線"/>
+                                                </StackPanel>
+                                            </Button>
+                                        </Grid>
+                                    </materialDesign:Card>
+                                </DataTemplate>
+                            </ItemsControl.ItemTemplate>
+                        </ItemsControl>
+                    </ScrollViewer>
+
+                    <StackPanel x:Name="EmptyStateStackPanel" HorizontalAlignment="Center" VerticalAlignment="Center"
+                                Visibility="Collapsed">
+                        <materialDesign:PackIcon Kind="Magnify" Width="48" Height="48" Opacity="0.3"
+                                                  HorizontalAlignment="Center"/>
+                        <TextBlock Text="尚未找到其他裝置" Opacity="0.5" Margin="0,8,0,0" HorizontalAlignment="Center"/>
+                    </StackPanel>
+                </Grid>
+
+                <Expander Grid.Row="3" Header="狀態紀錄" Margin="0,8,0,0">
+                    <TextBox x:Name="LogTextBox" AutomationProperties.AutomationId="LogTextBox"
+                             IsReadOnly="True" TextWrapping="Wrap" MaxHeight="120"
+                             VerticalScrollBarVisibility="Auto" FontFamily="Consolas" FontSize="11"
+                             BorderThickness="0" Background="Transparent"/>
+                </Expander>
+            </Grid>
+
+            <!-- ===================== 已連線 / 功能畫面 ===================== -->
+            <Grid x:Name="ConnectedViewRoot" AutomationProperties.AutomationId="ConnectedViewRoot" Visibility="Collapsed">
+                <StackPanel VerticalAlignment="Center" HorizontalAlignment="Center">
+                    <materialDesign:PackIcon Kind="CheckDecagram" Width="72" Height="72"
+                                              HorizontalAlignment="Center"
+                                              Foreground="{DynamicResource MaterialDesign.Brush.Primary}"/>
+                    <TextBlock x:Name="ConnectedDeviceNameText" AutomationProperties.AutomationId="ConnectedDeviceNameText"
+                               FontSize="24" FontWeight="Bold"
+                               HorizontalAlignment="Center" Margin="0,16,0,4"/>
+                    <TextBlock Text="已連線" Opacity="0.6" HorizontalAlignment="Center" Margin="0,0,0,32"/>
+                    <Button AutomationProperties.AutomationId="DisconnectButton"
+                            Style="{StaticResource MaterialDesignRaisedButton}"
+                            Padding="24,10" Click="DisconnectButton_Click">
+                        <StackPanel Orientation="Horizontal">
+                            <materialDesign:PackIcon Kind="LanDisconnect" Margin="0,0,8,0"/>
+                            <TextBlock Text="中斷連線"/>
+                        </StackPanel>
+                    </Button>
+                </StackPanel>
+            </Grid>
+
+            <materialDesign:Snackbar x:Name="MainSnackbar"
+                                      HorizontalAlignment="Stretch" VerticalAlignment="Bottom"
+                                      Margin="16"/>
+        </Grid>
+    </materialDesign:DialogHost>
 </Window>
