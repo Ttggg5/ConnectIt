@@ -10,6 +10,7 @@
 - **連線確認交握**:發起連線的一方送出請求後,需等待對方在畫面上按下「接受」或「拒絕」才會建立連線。
 - **斷線偵測**:任一方關閉連線都會通知另一方,並自動返回裝置搜尋畫面。
 - **Material Design UI**:使用 [MaterialDesignThemes](https://github.com/MaterialDesignInXAML/MaterialDesignInXamlToolkit) 打造的介面,含裝置清單、連線確認對話框、狀態日誌。
+- **導覽列與設定頁**:左側導覽列可在「裝置」與「設定」頁面間切換;設定頁可選擇淺色、深色或跟隨系統的顏色主題,選擇會儲存在本機,下次啟動時套用。
 
 ## 專案結構
 
@@ -18,6 +19,7 @@
 | `ConnectIt.Wpf` | 主要的 WPF 應用程式 |
 | `ConnectIt.Wpf/Services/MdnsDiscoveryService.cs` | 負責 mDNS 裝置廣播與探索 |
 | `ConnectIt.Wpf/Services/ConnectionService.cs` | 負責 TCP 連線交握(請求/接受/拒絕)與斷線偵測 |
+| `ConnectIt.Wpf/Services/ThemeService.cs` | 負責套用與儲存淺色/深色/跟隨系統的顏色主題 |
 | `ConnectIt.Wpf/Models/DiscoveredDevice.cs` | 探索到的裝置資料模型 |
 | `ConnectIt.Tests` | 使用 xUnit 撰寫的單元測試,涵蓋連線交握流程與裝置模型 |
 

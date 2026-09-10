@@ -15,6 +15,35 @@
         FontFamily="{DynamicResource MaterialDesignFont}">
     <materialDesign:DialogHost x:Name="RootDialogHost" Identifier="RootDialog">
         <Grid>
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="Auto"/>
+                <ColumnDefinition Width="*"/>
+            </Grid.ColumnDefinitions>
+
+            <!-- ===================== 導覽列 ===================== -->
+            <materialDesign:ColorZone Grid.Column="0" Mode="PrimaryMid">
+                <StackPanel Width="84">
+                    <ListBox x:Name="NavListBox" AutomationProperties.AutomationId="NavListBox"
+                             Margin="0,16,0,0" Background="Transparent" BorderThickness="0"
+                             ScrollViewer.HorizontalScrollBarVisibility="Disabled"
+                             SelectionChanged="NavListBox_SelectionChanged">
+                        <ListBoxItem AutomationProperties.AutomationId="NavDevicesItem" HorizontalContentAlignment="Center">
+                            <StackPanel Margin="0,8" HorizontalAlignment="Center">
+                                <materialDesign:PackIcon Kind="Devices" Width="24" Height="24" HorizontalAlignment="Center"/>
+                                <TextBlock Text="裝置" FontSize="11" Margin="0,4,0,0" HorizontalAlignment="Center"/>
+                            </StackPanel>
+                        </ListBoxItem>
+                        <ListBoxItem AutomationProperties.AutomationId="NavSettingsItem" HorizontalContentAlignment="Center">
+                            <StackPanel Margin="0,8" HorizontalAlignment="Center">
+                                <materialDesign:PackIcon Kind="Cog" Width="24" Height="24" HorizontalAlignment="Center"/>
+                                <TextBlock Text="設定" FontSize="11" Margin="0,4,0,0" HorizontalAlignment="Center"/>
+                            </StackPanel>
+                        </ListBoxItem>
+                    </ListBox>
+                </StackPanel>
+            </materialDesign:ColorZone>
+
+            <Grid Grid.Column="1">
             <!-- ===================== 裝置探索畫面 ===================== -->
             <Grid x:Name="DiscoveryViewRoot" Margin="16">
                 <Grid.RowDefinitions>
@@ -154,9 +183,53 @@
                 </StackPanel>
             </Grid>
 
+            <!-- ===================== 設定畫面 ===================== -->
+            <Grid x:Name="SettingsViewRoot" AutomationProperties.AutomationId="SettingsViewRoot"
+                  Margin="16" Visibility="Collapsed">
+                <StackPanel MaxWidth="420" HorizontalAlignment="Left" VerticalAlignment="Top">
+                    <TextBlock Text="設定" FontSize="20" FontWeight="Bold" Margin="0,0,0,16"/>
+
+                    <materialDesign:Card Padding="16">
+                        <StackPanel>
+                            <TextBlock Text="主題外觀" FontWeight="Medium" FontSize="15"/>
+                            <TextBlock Text="選擇應用程式要使用的顏色主題。" Opacity="0.6" FontSize="12"
+                                       Margin="0,4,0,16" TextWrapping="Wrap"/>
+
+                            <RadioButton x:Name="ThemeLightRadioButton" GroupName="ThemeMode" Tag="Light"
+                                         AutomationProperties.AutomationId="ThemeLightRadioButton"
+                                         Checked="ThemeRadioButton_Checked" Margin="0,6">
+                                <StackPanel Orientation="Horizontal">
+                                    <materialDesign:PackIcon Kind="WeatherSunny" VerticalAlignment="Center"/>
+                                    <TextBlock Text="淺色" Margin="8,0,0,0" VerticalAlignment="Center"/>
+                                </StackPanel>
+                            </RadioButton>
+
+                            <RadioButton x:Name="ThemeDarkRadioButton" GroupName="ThemeMode" Tag="Dark"
+                                         AutomationProperties.AutomationId="ThemeDarkRadioButton"
+                                         Checked="ThemeRadioButton_Checked" Margin="0,6">
+                                <StackPanel Orientation="Horizontal">
+                                    <materialDesign:PackIcon Kind="WeatherNight" VerticalAlignment="Center"/>
+                                    <TextBlock Text="深色" Margin="8,0,0,0" VerticalAlignment="Center"/>
+                                </StackPanel>
+                            </RadioButton>
+
+                            <RadioButton x:Name="ThemeAutoRadioButton" GroupName="ThemeMode" Tag="Auto"
+                                         AutomationProperties.AutomationId="ThemeAutoRadioButton"
+                                         Checked="ThemeRadioButton_Checked" Margin="0,6">
+                                <StackPanel Orientation="Horizontal">
+                                    <materialDesign:PackIcon Kind="BrightnessAuto" VerticalAlignment="Center"/>
+                                    <TextBlock Text="跟隨系統" Margin="8,0,0,0" VerticalAlignment="Center"/>
+                                </StackPanel>
+                            </RadioButton>
+                        </StackPanel>
+                    </materialDesign:Card>
+                </StackPanel>
+            </Grid>
+
             <materialDesign:Snackbar x:Name="MainSnackbar"
                                       HorizontalAlignment="Stretch" VerticalAlignment="Bottom"
                                       Margin="16"/>
+            </Grid>
         </Grid>
     </materialDesign:DialogHost>
 </Window>

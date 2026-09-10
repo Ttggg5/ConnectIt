@@ -22,6 +22,7 @@ public partial class MainWindow : Window
 
     private readonly MdnsDiscoveryService _discovery = new();
     private readonly ConnectionService _connection = new();
+    private readonly ThemeService _themeService = new();
     private readonly ObservableCollection<DiscoveredDevice> _devices = new();
 
     private CancellationTokenSource? _searchCts;
@@ -43,12 +44,18 @@ public partial class MainWindow : Window
         _connection.Connected += OnConnected;
         _connection.RemoteDisconnected += OnRemoteDisconnected;
 
+        _themeService.Initialize();
+        SetThemeRadioButtonForMode(_themeService.CurrentMode);
+
+        NavListBox.SelectedIndex = 0;
+
         Loaded += MainWindow_Loaded;
         Closed += (_, _) =>
         {
             _searchCts?.Cancel();
             _discovery.Dispose();
             _connection.Dispose();
+            _themeService.Dispose();
         };
     }
 
@@ -138,6 +145,53 @@ public partial class MainWindow : Window
     {
         _devices.Clear();
         StartSearchCycle();
+    }
+
+    private enum AppPage
+    {
+        Devices,
+        Settings,
+    }
+
+    private void NavListBox_SelectionChanged(object sender, SelectionChangedEventArgs e)
+    {
+        SetActivePage(NavListBox.SelectedIndex == 1 ? AppPage.Settings : AppPage.Devices);
+    }
+
+    /// <summary>切換導覽列選到的頁面。「裝置」頁會依目前是否已連線,顯示搜尋畫面或已連線畫面。</summary>
+    private void SetActivePage(AppPage page)
+    {
+        if (page == AppPage.Settings)
+        {
+            DiscoveryViewRoot.Visibility = Visibility.Collapsed;
+            ConnectedViewRoot.Visibility = Visibility.Collapsed;
+            SettingsViewRoot.Visibility = Visibility.Visible;
+            return;
+        }
+
+        SettingsViewRoot.Visibility = Visibility.Collapsed;
+        var isConnected = _connection.IsConnected;
+        ConnectedViewRoot.Visibility = isConnected ? Visibility.Visible : Visibility.Collapsed;
+        DiscoveryViewRoot.Visibility = isConnected ? Visibility.Collapsed : Visibility.Visible;
+    }
+
+    private void ThemeRadioButton_Checked(object sender, RoutedEventArgs e)
+    {
+        if (sender is RadioButton { Tag: string tag } && Enum.TryParse<AppThemeMode>(tag, out var mode))
+        {
+            _themeService.SetMode(mode);
+        }
+    }
+
+    private void SetThemeRadioButtonForMode(AppThemeMode mode)
+    {
+        var radioButton = mode switch
+        {
+            AppThemeMode.Light => ThemeLightRadioButton,
+            AppThemeMode.Dark => ThemeDarkRadioButton,
+            _ => ThemeAutoRadioButton,
+        };
+        radioButton.IsChecked = true;
     }
 
     private void UpdateEmptyState()
@@ -284,8 +338,8 @@ public partial class MainWindow : Window
             _searchCts?.Cancel();
 
             ConnectedDeviceNameText.Text = e.RemoteName;
-            DiscoveryViewRoot.Visibility = Visibility.Collapsed;
-            ConnectedViewRoot.Visibility = Visibility.Visible;
+            NavListBox.SelectedIndex = 0;
+            SetActivePage(AppPage.Devices);
 
             AppendLog($"已與 {e.RemoteName} ({e.RemoteAddress}) 建立連線。");
         });
@@ -309,8 +363,8 @@ public partial class MainWindow : Window
     /// <summary>不管是自己按了中斷連線,還是對方把連線關掉,都回到搜尋畫面並重新開始廣播/搜尋。</summary>
     private void ReturnToDiscoveryView(string logMessage)
     {
-        ConnectedViewRoot.Visibility = Visibility.Collapsed;
-        DiscoveryViewRoot.Visibility = Visibility.Visible;
+        NavListBox.SelectedIndex = 0;
+        SetActivePage(AppPage.Devices);
 
         _devices.Clear();
         AdvertiseCurrentName();
