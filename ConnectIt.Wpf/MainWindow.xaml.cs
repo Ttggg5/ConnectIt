@@ -44,7 +44,7 @@ public partial class MainWindow : Window
         _connection.Connected += OnConnected;
         _connection.RemoteDisconnected += OnRemoteDisconnected;
 
-        _themeService.Initialize();
+        _themeService.Initialize(this);
         SetThemeRadioButtonForMode(_themeService.CurrentMode);
 
         NavListBox.SelectedIndex = 0;

@@ -1,6 +1,9 @@
 using System.IO;
+using System.Runtime.InteropServices;
 using System.Text.Json;
 using System.Windows;
+using System.Windows.Interop;
+using System.Windows.Media;
 using ConnectIt.Wpf.Models;
 using MaterialDesignThemes.Wpf;
 using Microsoft.Win32;
@@ -11,6 +14,8 @@ namespace ConnectIt.Wpf.Services;
 /// 管理應用程式的顏色主題(淺色/深色/跟隨系統),並把使用者的選擇儲存在本機供下次啟動使用。
 /// 「跟隨系統」模式會讀取 Windows「設定 > 個人化 > 色彩」的淺色/深色設定,
 /// 並在使用者於系統設定中切換主題時即時跟著更新。
+/// 除了套用 MaterialDesign 的資源主題之外,也會同步透過 DWM API 把視窗標題列改成
+/// 跟目前主題一致的顏色(而不是維持系統預設的白色/黑色標題列)。
 /// </summary>
 public sealed class ThemeService : IDisposable
 {
@@ -19,6 +24,8 @@ public sealed class ThemeService : IDisposable
 
     private readonly PaletteHelper _paletteHelper = new();
     private readonly string _settingsFilePath;
+
+    private Window? _window;
 
     public AppThemeMode CurrentMode { get; private set; } = AppThemeMode.Auto;
 
@@ -30,8 +37,10 @@ public sealed class ThemeService : IDisposable
     }
 
     /// <summary>載入先前儲存的主題設定並套用。應在應用程式啟動、UI 建立完成後呼叫一次。</summary>
-    public void Initialize()
+    /// <param name="window">要套用標題列顏色的視窗,通常是主視窗。</param>
+    public void Initialize(Window window)
     {
+        _window = window;
         CurrentMode = LoadSavedMode();
         Apply();
     }
@@ -67,6 +76,46 @@ public sealed class ThemeService : IDisposable
         var theme = _paletteHelper.GetTheme();
         theme.SetBaseTheme(effectiveTheme == AppThemeMode.Dark ? BaseTheme.Dark : BaseTheme.Light);
         _paletteHelper.SetTheme(theme);
+
+        ApplyTitleBarTheme(effectiveTheme == AppThemeMode.Dark);
+    }
+
+    /// <summary>透過 DWM API 把視窗標題列的深色模式與顏色調整成跟目前套用的 MaterialDesign 主題一致。</summary>
+    private void ApplyTitleBarTheme(bool isDark)
+    {
+        if (_window is null)
+        {
+            return;
+        }
+
+        try
+        {
+            var handle = new WindowInteropHelper(_window).EnsureHandle();
+            if (handle == IntPtr.Zero)
+            {
+                return;
+            }
+
+            var useDarkMode = isDark ? 1 : 0;
+            NativeMethods.DwmSetWindowAttribute(handle, NativeMethods.DwmwaUseImmersiveDarkMode, ref useDarkMode, sizeof(int));
+
+            // 標題列/文字顏色只有 Windows 11 (build 22000+) 才支援,舊版系統呼叫會失敗但不影響其他設定。
+            if (Application.Current.Resources["MaterialDesignPaper"] is SolidColorBrush paperBrush)
+            {
+                var captionColor = NativeMethods.ToColorRef(paperBrush.Color);
+                NativeMethods.DwmSetWindowAttribute(handle, NativeMethods.DwmwaCaptionColor, ref captionColor, sizeof(int));
+            }
+
+            if (Application.Current.Resources["MaterialDesignBody"] is SolidColorBrush bodyBrush)
+            {
+                var textColor = NativeMethods.ToColorRef(bodyBrush.Color);
+                NativeMethods.DwmSetWindowAttribute(handle, NativeMethods.DwmwaTextColor, ref textColor, sizeof(int));
+            }
+        }
+        catch
+        {
+            // 部分 Windows 版本/環境不支援這些 DWM 屬性,套用失敗就維持系統預設標題列即可。
+        }
     }
 
     private static AppThemeMode GetSystemBaseTheme()
@@ -130,5 +179,19 @@ public sealed class ThemeService : IDisposable
     private sealed class ThemeSettingsData
     {
         public string Theme { get; set; } = nameof(AppThemeMode.Auto);
+    }
+
+    /// <summary>DWM (Desktop Window Manager) 標題列外觀相關的 P/Invoke 宣告。</summary>
+    private static class NativeMethods
+    {
+        public const int DwmwaUseImmersiveDarkMode = 20;
+        public const int DwmwaCaptionColor = 35;
+        public const int DwmwaTextColor = 36;
+
+        [DllImport("dwmapi.dll", PreserveSig = true)]
+        public static extern int DwmSetWindowAttribute(IntPtr hwnd, int attribute, ref int value, int valueSize);
+
+        /// <summary>把 WPF 的 Color 轉成 DWM 需要的 COLORREF 格式 (0x00BBGGRR)。</summary>
+        public static int ToColorRef(Color color) => color.R | (color.G << 8) | (color.B << 16);
     }
 }
