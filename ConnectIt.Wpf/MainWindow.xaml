@@ -1,0 +1,62 @@
+<Window x:Class="ConnectIt.Wpf.MainWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
+        xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+        xmlns:local="clr-namespace:ConnectIt.Wpf"
+        mc:Ignorable="d"
+        Title="ConnectIt - 裝置探索" Height="520" Width="720"
+        MinHeight="420" MinWidth="600">
+    <Grid Margin="12">
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="*"/>
+            <RowDefinition Height="140"/>
+        </Grid.RowDefinitions>
+
+        <!-- 本機廣播設定 -->
+        <GroupBox Header="本機裝置(廣播讓其他裝置找到你)" Grid.Row="0" Margin="0,0,0,8">
+            <StackPanel Orientation="Horizontal" Margin="8">
+                <TextBlock Text="裝置名稱:" VerticalAlignment="Center" Margin="0,0,6,0"/>
+                <TextBox x:Name="DeviceNameTextBox" Width="200" VerticalAlignment="Center"/>
+                <Button x:Name="ToggleAdvertiseButton" AutomationProperties.AutomationId="ToggleAdvertiseButton"
+                        Content="開始廣播並監聽"
+                        Margin="12,0,0,0" Padding="10,4" Click="ToggleAdvertiseButton_Click"/>
+                <TextBlock x:Name="AdvertiseStatusText" AutomationProperties.AutomationId="AdvertiseStatusText"
+                           VerticalAlignment="Center" Margin="12,0,0,0" Foreground="Gray"/>
+            </StackPanel>
+        </GroupBox>
+
+        <!-- 搜尋控制 -->
+        <DockPanel Grid.Row="1" Margin="0,0,0,8">
+            <Button x:Name="RefreshButton" AutomationProperties.AutomationId="RefreshButton"
+                    Content="重新搜尋裝置" DockPanel.Dock="Left"
+                    Padding="10,4" Click="RefreshButton_Click"/>
+            <Button x:Name="ConnectButton" Content="連線到選取的裝置" DockPanel.Dock="Right"
+                    Padding="10,4" Click="ConnectButton_Click" IsEnabled="False"/>
+            <TextBlock Text="搜尋到的裝置:" VerticalAlignment="Center" Margin="12,0"/>
+        </DockPanel>
+
+        <!-- 裝置清單 -->
+        <ListView x:Name="DevicesListView" AutomationProperties.AutomationId="DevicesListView"
+                  Grid.Row="2" Margin="0,0,0,8"
+                  SelectionChanged="DevicesListView_SelectionChanged">
+            <ListView.View>
+                <GridView>
+                    <GridViewColumn Header="裝置名稱" Width="220" DisplayMemberBinding="{Binding DisplayName}"/>
+                    <GridViewColumn Header="IP 位址" Width="160" DisplayMemberBinding="{Binding Address}"/>
+                    <GridViewColumn Header="連接埠" Width="80" DisplayMemberBinding="{Binding Port}"/>
+                    <GridViewColumn Header="主機名稱" Width="200" DisplayMemberBinding="{Binding HostName}"/>
+                </GridView>
+            </ListView.View>
+        </ListView>
+
+        <!-- 狀態紀錄 -->
+        <GroupBox Header="狀態紀錄" Grid.Row="3">
+            <TextBox x:Name="LogTextBox" AutomationProperties.AutomationId="LogTextBox"
+                     IsReadOnly="True" TextWrapping="Wrap"
+                     VerticalScrollBarVisibility="Auto" FontFamily="Consolas" FontSize="11"/>
+        </GroupBox>
+    </Grid>
+</Window>

@@ -1,0 +1,44 @@
+# Build results
+[Bb]in/
+[Oo]bj/
+[Dd]ebug/
+[Rr]elease/
+[Xx]64/
+[Xx]86/
+[Aa][Rr][Mm]/
+[Aa][Rr][Mm]64/
+out/
+publish/
+
+# Visual Studio / Rider
+.vs/
+.idea/
+*.user
+*.userosscache
+*.sln.docstates
+*.suo
+
+# .NET
+project.lock.json
+project.fragment.lock.json
+artifacts/
+*.nupkg
+
+# NuGet
+*.nuget.props
+*.nuget.targets
+.nuget/
+
+# Test results
+[Tt]est[Rr]esult*/
+*.trx
+*.coverage
+*.coveragexml
+
+# Rider/VSCode
+.vscode/
+*.DotSettings.user
+
+# OS files
+.DS_Store
+Thumbs.db
