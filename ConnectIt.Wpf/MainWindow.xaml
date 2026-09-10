@@ -163,24 +163,73 @@
             </Grid>
 
             <!-- ===================== 已連線 / 功能畫面 ===================== -->
-            <Grid x:Name="ConnectedViewRoot" AutomationProperties.AutomationId="ConnectedViewRoot" Visibility="Collapsed">
-                <StackPanel VerticalAlignment="Center" HorizontalAlignment="Center">
-                    <materialDesign:PackIcon Kind="CheckDecagram" Width="72" Height="72"
+            <Grid x:Name="ConnectedViewRoot" AutomationProperties.AutomationId="ConnectedViewRoot" Visibility="Collapsed"
+                  AllowDrop="True"
+                  DragEnter="ConnectedViewRoot_DragEnter" DragOver="ConnectedViewRoot_DragEnter"
+                  DragLeave="ConnectedViewRoot_DragLeave" Drop="ConnectedViewRoot_Drop">
+                <Grid.RowDefinitions>
+                    <RowDefinition Height="*"/>
+                    <RowDefinition Height="Auto"/>
+                </Grid.RowDefinitions>
+
+                <StackPanel Grid.Row="0" VerticalAlignment="Center" HorizontalAlignment="Center">
+                    <materialDesign:PackIcon Kind="CheckDecagram" Width="64" Height="64"
                                               HorizontalAlignment="Center"
                                               Foreground="{DynamicResource MaterialDesign.Brush.Primary}"/>
                     <TextBlock x:Name="ConnectedDeviceNameText" AutomationProperties.AutomationId="ConnectedDeviceNameText"
-                               FontSize="24" FontWeight="Bold"
-                               HorizontalAlignment="Center" Margin="0,16,0,4"/>
-                    <TextBlock Text="已連線" Opacity="0.6" HorizontalAlignment="Center" Margin="0,0,0,32"/>
-                    <Button AutomationProperties.AutomationId="DisconnectButton"
-                            Style="{StaticResource MaterialDesignRaisedButton}"
-                            Padding="24,10" Click="DisconnectButton_Click">
-                        <StackPanel Orientation="Horizontal">
-                            <materialDesign:PackIcon Kind="LanDisconnect" Margin="0,0,8,0"/>
-                            <TextBlock Text="中斷連線"/>
-                        </StackPanel>
-                    </Button>
+                               FontSize="22" FontWeight="Bold"
+                               HorizontalAlignment="Center" Margin="0,12,0,4"/>
+                    <TextBlock Text="已連線" Opacity="0.6" HorizontalAlignment="Center" Margin="0,0,0,20"/>
+
+                    <StackPanel Orientation="Horizontal" HorizontalAlignment="Center">
+                        <Button x:Name="SendFileButton" AutomationProperties.AutomationId="SendFileButton"
+                                Style="{StaticResource MaterialDesignRaisedButton}"
+                                Padding="20,10" Margin="0,0,12,0" Click="SendFileButton_Click">
+                            <StackPanel Orientation="Horizontal">
+                                <materialDesign:PackIcon Kind="FileSend" Margin="0,0,8,0"/>
+                                <TextBlock Text="傳送檔案"/>
+                            </StackPanel>
+                        </Button>
+                        <Button AutomationProperties.AutomationId="DisconnectButton"
+                                Style="{StaticResource MaterialDesignOutlinedButton}"
+                                Padding="20,10" Click="DisconnectButton_Click">
+                            <StackPanel Orientation="Horizontal">
+                                <materialDesign:PackIcon Kind="LanDisconnect" Margin="0,0,8,0"/>
+                                <TextBlock Text="中斷連線"/>
+                            </StackPanel>
+                        </Button>
+                    </StackPanel>
+
+                    <TextBlock Text="或把檔案拖曳到這個視窗來傳送" Opacity="0.5" FontSize="11"
+                               Margin="0,12,0,0" HorizontalAlignment="Center"/>
                 </StackPanel>
+
+                <materialDesign:Card x:Name="FileTransferCard" Grid.Row="1" Margin="16" Padding="16" Visibility="Collapsed">
+                    <StackPanel>
+                        <Grid>
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="*"/>
+                                <ColumnDefinition Width="Auto"/>
+                            </Grid.ColumnDefinitions>
+                            <TextBlock x:Name="FileTransferNameText" Grid.Column="0"
+                                       FontWeight="Medium" TextTrimming="CharacterEllipsis" VerticalAlignment="Center"/>
+                            <Button x:Name="CancelFileTransferButton" AutomationProperties.AutomationId="CancelFileTransferButton"
+                                    Grid.Column="1" Style="{StaticResource MaterialDesignIconButton}"
+                                    ToolTip="取消傳輸" Click="CancelFileTransferButton_Click">
+                                <materialDesign:PackIcon Kind="Close" Width="18" Height="18"/>
+                            </Button>
+                        </Grid>
+                        <ProgressBar x:Name="FileTransferProgressBar" Margin="0,8,0,4" Minimum="0" Maximum="100"/>
+                        <TextBlock x:Name="FileTransferStatusText" Opacity="0.6" FontSize="11"/>
+                    </StackPanel>
+                </materialDesign:Card>
+
+                <Border x:Name="DropOverlay" Grid.RowSpan="2" Background="#66000000" Visibility="Collapsed" IsHitTestVisible="False">
+                    <StackPanel VerticalAlignment="Center" HorizontalAlignment="Center">
+                        <materialDesign:PackIcon Kind="FileUpload" Width="48" Height="48" Foreground="White" HorizontalAlignment="Center"/>
+                        <TextBlock Text="放開以傳送檔案" Foreground="White" FontSize="16" Margin="0,8,0,0" HorizontalAlignment="Center"/>
+                    </StackPanel>
+                </Border>
             </Grid>
 
             <!-- ===================== 設定畫面 ===================== -->
@@ -221,6 +270,28 @@
                                     <TextBlock Text="跟隨系統" Margin="8,0,0,0" VerticalAlignment="Center"/>
                                 </StackPanel>
                             </RadioButton>
+                        </StackPanel>
+                    </materialDesign:Card>
+
+                    <materialDesign:Card Padding="16" Margin="0,16,0,0">
+                        <StackPanel>
+                            <TextBlock Text="檔案接收" FontWeight="Medium" FontSize="15"/>
+                            <TextBlock Text="收到的檔案會儲存到這個資料夾。" Opacity="0.6" FontSize="12"
+                                       Margin="0,4,0,16" TextWrapping="Wrap"/>
+
+                            <Grid>
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="*"/>
+                                    <ColumnDefinition Width="Auto"/>
+                                </Grid.ColumnDefinitions>
+                                <TextBox x:Name="DownloadFolderTextBox" AutomationProperties.AutomationId="DownloadFolderTextBox"
+                                         Grid.Column="0" IsReadOnly="True" Focusable="False"
+                                         Style="{StaticResource MaterialDesignOutlinedTextBox}"
+                                         VerticalAlignment="Center" Margin="0,0,12,0"/>
+                                <Button x:Name="BrowseDownloadFolderButton" AutomationProperties.AutomationId="BrowseDownloadFolderButton"
+                                        Grid.Column="1" Style="{StaticResource MaterialDesignOutlinedButton}"
+                                        Content="瀏覽" Click="BrowseDownloadFolderButton_Click"/>
+                            </Grid>
                         </StackPanel>
                     </materialDesign:Card>
                 </StackPanel>
