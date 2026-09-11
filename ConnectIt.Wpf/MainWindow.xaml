@@ -135,8 +135,8 @@
                                                     Tag="{Binding}"
                                                     Click="ConnectToDevice_Click">
                                                 <StackPanel Orientation="Horizontal">
-                                                    <materialDesign:PackIcon Kind="LanConnect" Margin="0,0,6,0"/>
-                                                    <TextBlock Text="連線"/>
+                                                    <materialDesign:PackIcon Kind="LanConnect" Margin="0,0,6,0" Foreground="white"/>
+                                                    <TextBlock Text="連線" Foreground="white"/>
                                                 </StackPanel>
                                             </Button>
                                         </Grid>
@@ -184,7 +184,7 @@
                     <StackPanel Orientation="Horizontal" HorizontalAlignment="Center">
                         <Button x:Name="SendFileButton" AutomationProperties.AutomationId="SendFileButton"
                                 Style="{StaticResource MaterialDesignRaisedButton}"
-                                Padding="20,10" Margin="0,0,12,0" Click="SendFileButton_Click">
+                                Height="Auto" Padding="20,10" Margin="0,0,12,0" Click="SendFileButton_Click">
                             <StackPanel Orientation="Horizontal">
                                 <materialDesign:PackIcon Kind="FileSend" Margin="0,0,8,0"/>
                                 <TextBlock Text="傳送檔案"/>
@@ -192,7 +192,7 @@
                         </Button>
                         <Button AutomationProperties.AutomationId="DisconnectButton"
                                 Style="{StaticResource MaterialDesignOutlinedButton}"
-                                Padding="20,10" Click="DisconnectButton_Click">
+                                Height="Auto" Padding="20,10" Click="DisconnectButton_Click">
                             <StackPanel Orientation="Horizontal">
                                 <materialDesign:PackIcon Kind="LanDisconnect" Margin="0,0,8,0"/>
                                 <TextBlock Text="中斷連線"/>
