@@ -17,6 +17,12 @@ public sealed class ConnectionService : IDisposable
     private static readonly TimeSpan RequestTimeout = TimeSpan.FromSeconds(10);
     private static readonly TimeSpan ResponseTimeout = TimeSpan.FromSeconds(60);
 
+    // TcpClient.ConnectAsync() 本身沒有逾時機制——如果對方位址不可達(例如撿到一個實際上
+    // 不可路由的位址),很多網路環境會直接把 SYN 封包丟掉而不回 RST,這個 await 就會永遠掛著,
+    // 使用者會覺得「按下去完全沒反應」卻連個錯誤訊息都看不到。額外套一個逾時,至少能明確
+    // 回報「連線逾時」讓使用者知道發生了什麼事。
+    private static readonly TimeSpan ConnectTimeout = TimeSpan.FromSeconds(8);
+
     // 訊框長度前綴的長度(4 bytes),以及單一訊框的長度上限(1 型別 byte + 資料),
     // 避免對方送出異常大的長度值時整個配置一大塊記憶體。
     private const int FrameLengthPrefixSize = 4;
@@ -206,7 +212,18 @@ public sealed class ConnectionService : IDisposable
         var client = new TcpClient();
         try
         {
-            await client.ConnectAsync(address, port, cancellationToken).ConfigureAwait(false);
+            using (var connectCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken))
+            {
+                connectCts.CancelAfter(ConnectTimeout);
+                try
+                {
+                    await client.ConnectAsync(address, port, connectCts.Token).ConfigureAwait(false);
+                }
+                catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
+                {
+                    throw new TimeoutException("連線逾時(對方可能離線或位址不可達)。");
+                }
+            }
 
             var stream = client.GetStream();
             using var reader = new StreamReader(stream, Encoding.UTF8, leaveOpen: true);

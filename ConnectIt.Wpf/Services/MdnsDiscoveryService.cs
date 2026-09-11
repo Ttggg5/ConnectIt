@@ -270,7 +270,7 @@ public sealed class MdnsDiscoveryService : IDisposable
                 .Select(ParseTxtFriendlyName)
                 .FirstOrDefault(n => n != null);
 
-            var inlineAddress = records.OfType<AddressRecord>().FirstOrDefault(a => a.Name == srv.Target);
+            var inlineAddress = records.OfType<AddressRecord>().FirstOrDefault(a => a.Name == srv.Target && IsIPv4(a));
             if (inlineAddress != null)
             {
                 Emit(srv.Name, srv.Target, inlineAddress.Address, srv.Port, friendlyName);
@@ -283,7 +283,7 @@ public sealed class MdnsDiscoveryService : IDisposable
             }
         }
 
-        foreach (var addr in records.OfType<AddressRecord>())
+        foreach (var addr in records.OfType<AddressRecord>().Where(IsIPv4))
         {
             if (_pendingByHost.TryRemove(addr.Name, out var pending))
             {
@@ -291,6 +291,12 @@ public sealed class MdnsDiscoveryService : IDisposable
             }
         }
     }
+
+    // 對方裝置(尤其是手機)常常是雙棧(IPv4 + IPv6)並在同一個 mDNS 封包裡同時附上 A 與 AAAA
+    // 記錄;這裡一律只挑 IPv4——跟 GetRoutableIPv4Addresses() 只廣播 IPv4 位址的政策一致,
+    // 也避免撿到不保證可連線的 IPv6 位址(例如連結本地位址缺少 scope id、或雙方 IPv6 連通性
+    // 不對稱)導致 TcpClient.ConnectAsync 卡住或失敗,卻沒有任何逾時/錯誤訊息可看。
+    private static bool IsIPv4(AddressRecord record) => record.Address.AddressFamily == AddressFamily.InterNetwork;
 
     private static string? ParseTxtFriendlyName(string entry)
     {
