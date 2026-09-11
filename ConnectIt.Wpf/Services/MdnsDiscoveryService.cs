@@ -37,7 +37,7 @@ public sealed class MdnsDiscoveryService : IDisposable
     // fire-and-forget 的 UDP,可能遺失,對方如果是被強制關閉/當機/斷網則完全不會送出。
     // 所以額外用「多久沒再收到回應」做逾時偵測,當作保險機制。
     private static readonly TimeSpan HeartbeatInterval = TimeSpan.FromSeconds(2);
-    private static readonly TimeSpan StaleTimeout = TimeSpan.FromSeconds(15);
+    private static readonly TimeSpan StaleTimeout = TimeSpan.FromSeconds(6);
 
     private MulticastService? _mdns;
     private ServiceDiscovery? _sd;
@@ -50,10 +50,24 @@ public sealed class MdnsDiscoveryService : IDisposable
     private readonly HashSet<IPAddress> _selfAddresses = new();
     private int _selfPort = -1;
 
-    // 每次啟動 App 都會產生一組固定的短碼,附加在 DNS-SD 實體名稱後面,
-    // 確保「同一台電腦開兩個視窗測試」或「兩台裝置剛好同名」時,彼此的服務名稱不會撞名。
-    // 撞名的話,原本用名稱字串比對「是不是自己」的邏輯會誤判,導致兩邊互相把對方當成自己而看不到彼此。
-    private readonly string _instanceSuffix = Guid.NewGuid().ToString("N")[..4];
+    // 這個處理序這輩子廣播過的所有完整實體名稱(不會移除)。StopAdvertising() 送出 goodbye 之後
+    // 會立刻把 _selfProfile/_selfPort/_selfAddresses 清空,但殘留在網路上、或殘留在
+    // Makaretu.Dns.Multicast 內部 Catalog 裡的舊封包(見 Advertise() 上面的說明)還是可能在那之後
+    // 才被 OnAnswerReceived 處理到——這時候單靠「目前的 _selfProfile/_selfPort」已經沒辦法判斷
+    // 那是不是自己了,所以額外用這份永久清單保底:只要是自己生成過的名稱(帶有隨機短碼,不可能被
+    // 別的裝置用到),就永遠當作自己過濾掉,不管現在還有沒有在廣播。
+    private readonly HashSet<string> _ownInstanceNames = new(StringComparer.OrdinalIgnoreCase);
+
+    // 附加在 DNS-SD 實體名稱後面的短碼,確保「同一台電腦開兩個視窗測試」或「兩台裝置剛好同名」時,
+    // 彼此的服務名稱不會撞名(撞名的話,原本用名稱字串比對「是不是自己」的邏輯會誤判)。
+    //
+    // 這組短碼在每次呼叫 Advertise() 時都會重新產生(而不是整個物件存活期間固定一組),原因是
+    // Makaretu.Dns.Multicast 的 ServiceDiscovery.Unadvertise() 只會移除 PTR 記錄,不會清掉先前
+    // Advertise() 加進 Catalog 裡的 SRV/位址記錄(見官方 XML 文件)。如果重新廣播時沿用同一個
+    // 實體名稱,舊的 SRV 記錄(帶著舊的連接埠)可能還留在 Catalog 裡,導致對方查到的還是舊連接埠
+    // (影片伺服器重新啟動、連接埠換了一個新的之後,最容易踩到這個問題)。每次都換一個新名稱,
+    // 就一定是全新的 DNS-SD 記錄,不會跟任何殘留的舊記錄混在一起。
+    private string _instanceSuffix = Guid.NewGuid().ToString("N")[..4];
 
     // 等待位址解析的 host -> (instance, port, 顯示用的友善名稱)
     private readonly ConcurrentDictionary<DomainName, (DomainName Instance, int Port, string? FriendlyName)> _pendingByHost = new();
@@ -127,6 +141,7 @@ public sealed class MdnsDiscoveryService : IDisposable
             _sd.Unadvertise(_selfProfile);
         }
 
+        _instanceSuffix = Guid.NewGuid().ToString("N")[..4];
         var friendlyName = MakeSafeInstanceName(deviceName);
         var instanceName = $"{friendlyName}-{_instanceSuffix}";
         var addresses = GetRoutableIPv4Addresses();
@@ -134,14 +149,22 @@ public sealed class MdnsDiscoveryService : IDisposable
             ? new ServiceProfile(instanceName, ServiceType, (ushort)port, addresses)
             : new ServiceProfile(instanceName, ServiceType, (ushort)port);
         _selfProfile.AddProperty("name", friendlyName);
-        _sd.Advertise(_selfProfile);
+        _ownInstanceNames.Add(_selfProfile.FullyQualifiedName.ToString());
 
+        // 一定要在呼叫 Advertise() 之前就先更新好「自己」的位址/連接埠:Advertise() 會立刻送出
+        // 未經請求的公告封包,而我們自己的 _mdns 也會收到這個公告(多播本來就會回送給自己),
+        // 由 OnAnswerReceived -> Emit() 處理。如果 _selfPort/_selfAddresses 這時候還沒更新成
+        // 新的值,Emit() 裡「IP+Port 是不是自己」的保險判斷就會誤判失敗,導致剛開啟的服務把
+        // 自己也當成一台「找到的裝置」顯示出來,而且因為之後的公告都會被正確過濾掉,不會再有
+        // 移除事件,這個誤判的項目就會一直卡在清單裡。
         _selfAddresses.Clear();
         foreach (var address in addresses)
         {
             _selfAddresses.Add(address);
         }
         _selfPort = port;
+
+        _sd.Advertise(_selfProfile);
 
         Log($"已廣播本機服務「{instanceName}」,連接埠 {port},位址:{string.Join(", ", addresses)}");
     }
@@ -222,8 +245,12 @@ public sealed class MdnsDiscoveryService : IDisposable
     private bool IsConnectItInstance(DomainName name) =>
         name.ToString().EndsWith(_serviceTypeSuffix, StringComparison.OrdinalIgnoreCase);
 
+    // 除了跟目前的 _selfProfile 比對之外,也要比對「這輩子廣播過的所有名稱」——
+    // StopAdvertising() 之後 _selfProfile 會被清成 null,但殘留/延遲處理到的自己的舊封包
+    // 還是要能被認得出來,不能只看「目前」有沒有在廣播。
     private bool IsSelf(DomainName instanceName) =>
-        _selfProfile != null && instanceName == _selfProfile.FullyQualifiedName;
+        (_selfProfile != null && instanceName == _selfProfile.FullyQualifiedName)
+        || _ownInstanceNames.Contains(instanceName.ToString());
 
     private void OnServiceInstanceShutdown(object? sender, ServiceInstanceShutdownEventArgs e)
     {

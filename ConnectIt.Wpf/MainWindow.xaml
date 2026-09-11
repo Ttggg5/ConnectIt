@@ -445,7 +445,7 @@
                         <Button AutomationProperties.AutomationId="VideoWebViewBackButton"
                                 Style="{StaticResource MaterialDesignIconButton}"
                                 ToolTip="返回" Click="VideoWebViewBackButton_Click">
-                            <materialDesign:PackIcon Kind="ArrowLeft" Width="22" Height="22"/>
+                            <materialDesign:PackIcon Kind="ArrowLeft" Width="22" Height="22" Foreground="White"/>
                         </Button>
                         <TextBlock x:Name="VideoWebViewTitleText" VerticalAlignment="Center" Margin="8,0,0,0" FontWeight="Medium"/>
                     </StackPanel>
