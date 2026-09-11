@@ -21,7 +21,7 @@ public partial class MainWindow : Window
     // 搜尋期間內每隔幾秒就重送一次查詢,而不是只查一次就等到搜尋時間結束。
     // 兩台裝置如果幾乎同時啟動,單次查詢很容易在對方還沒完成廣播註冊前就送出而互相找不到對方,
     // 定期重試可以避開這種啟動時機的競爭問題。
-    private static readonly TimeSpan SearchQueryInterval = TimeSpan.FromSeconds(3);
+    private static readonly TimeSpan SearchQueryInterval = TimeSpan.FromSeconds(1);
 
     private readonly MdnsDiscoveryService _discovery = new();
     private readonly ConnectionService _connection = new();

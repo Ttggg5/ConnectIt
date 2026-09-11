@@ -36,7 +36,7 @@ public sealed class MdnsDiscoveryService : IDisposable
     // 對方正常關閉 App 時會送出 mDNS goodbye 封包(ServiceInstanceShutdown),但那是
     // fire-and-forget 的 UDP,可能遺失,對方如果是被強制關閉/當機/斷網則完全不會送出。
     // 所以額外用「多久沒再收到回應」做逾時偵測,當作保險機制。
-    private static readonly TimeSpan HeartbeatInterval = TimeSpan.FromSeconds(5);
+    private static readonly TimeSpan HeartbeatInterval = TimeSpan.FromSeconds(2);
     private static readonly TimeSpan StaleTimeout = TimeSpan.FromSeconds(15);
 
     private MulticastService? _mdns;
