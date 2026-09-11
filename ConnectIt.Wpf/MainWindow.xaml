@@ -5,6 +5,7 @@
         xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
         xmlns:local="clr-namespace:ConnectIt.Wpf"
         xmlns:materialDesign="http://materialdesigninxaml.net/winfx/xaml/themes"
+        xmlns:wv2="clr-namespace:Microsoft.Web.WebView2.Wpf;assembly=Microsoft.Web.WebView2.Wpf"
         mc:Ignorable="d"
         Title="ConnectIt" Height="600" Width="760"
         MinHeight="480" MinWidth="640"
@@ -31,6 +32,12 @@
                             <StackPanel Margin="0,8" HorizontalAlignment="Center">
                                 <materialDesign:PackIcon Kind="Devices" Width="24" Height="24" HorizontalAlignment="Center"/>
                                 <TextBlock Text="裝置" FontSize="11" Margin="0,4,0,0" HorizontalAlignment="Center"/>
+                            </StackPanel>
+                        </ListBoxItem>
+                        <ListBoxItem AutomationProperties.AutomationId="NavVideoItem" HorizontalContentAlignment="Center">
+                            <StackPanel Margin="0,8" HorizontalAlignment="Center">
+                                <materialDesign:PackIcon Kind="VideoBox" Width="24" Height="24" HorizontalAlignment="Center"/>
+                                <TextBlock Text="影片" FontSize="11" Margin="0,4,0,0" HorizontalAlignment="Center"/>
                             </StackPanel>
                         </ListBoxItem>
                         <ListBoxItem AutomationProperties.AutomationId="NavSettingsItem" HorizontalContentAlignment="Center">
@@ -240,6 +247,111 @@
                 </Border>
             </Grid>
 
+            <!-- ===================== 影片伺服器畫面 ===================== -->
+            <Grid x:Name="VideoViewRoot" AutomationProperties.AutomationId="VideoViewRoot" Margin="16" Visibility="Collapsed">
+                <Grid.RowDefinitions>
+                    <RowDefinition Height="Auto"/>
+                    <RowDefinition Height="Auto"/>
+                    <RowDefinition Height="*"/>
+                </Grid.RowDefinitions>
+
+                <materialDesign:Card Grid.Row="0" Padding="16" Margin="0,0,0,12">
+                    <StackPanel>
+                        <StackPanel Orientation="Horizontal">
+                            <materialDesign:PackIcon Kind="VideoBox" Width="32" Height="32"
+                                                      VerticalAlignment="Center"
+                                                      Foreground="{DynamicResource MaterialDesign.Brush.Primary}"/>
+                            <StackPanel Margin="12,0,0,0" VerticalAlignment="Center">
+                                <TextBlock Text="影片伺服器" FontSize="20" FontWeight="Bold"/>
+                                <TextBlock x:Name="VideoServerStatusText" AutomationProperties.AutomationId="VideoServerStatusText"
+                                           Text="尚未開啟" Opacity="0.6" FontSize="12"/>
+                            </StackPanel>
+                        </StackPanel>
+
+                        <StackPanel Orientation="Horizontal" Margin="0,16,0,0">
+                            <Button x:Name="StreamVideoButton" AutomationProperties.AutomationId="StreamVideoButton"
+                                    Style="{StaticResource MaterialDesignRaisedButton}"
+                                    Height="Auto" Padding="20,10" Margin="0,0,12,0" Click="StreamVideoButton_Click">
+                                <StackPanel Orientation="Horizontal">
+                                    <materialDesign:PackIcon Kind="PlayCircleOutline" Margin="0,0,8,0"/>
+                                    <TextBlock Text="分享單一影片"/>
+                                </StackPanel>
+                            </Button>
+                            <Button x:Name="ShareVideoFolderButton" AutomationProperties.AutomationId="ShareVideoFolderButton"
+                                    Style="{StaticResource MaterialDesignOutlinedButton}"
+                                    Height="Auto" Padding="20,10" Margin="0,0,12,0" Click="ShareVideoFolderButton_Click">
+                                <StackPanel Orientation="Horizontal">
+                                    <materialDesign:PackIcon Kind="FolderPlay" Margin="0,0,8,0"/>
+                                    <TextBlock Text="分享影片資料夾"/>
+                                </StackPanel>
+                            </Button>
+                            <Button x:Name="StopVideoServerButton" AutomationProperties.AutomationId="StopVideoServerButton"
+                                    Style="{StaticResource MaterialDesignOutlinedButton}"
+                                    Height="Auto" Padding="20,10" Click="StopVideoServerButton_Click"
+                                    Visibility="Collapsed">
+                                <StackPanel Orientation="Horizontal">
+                                    <materialDesign:PackIcon Kind="Stop" Margin="0,0,8,0"/>
+                                    <TextBlock Text="關閉影片伺服器"/>
+                                </StackPanel>
+                            </Button>
+                        </StackPanel>
+                    </StackPanel>
+                </materialDesign:Card>
+
+                <TextBlock Grid.Row="1" Text="區網內的影片伺服器" FontWeight="Medium" Margin="4,0,4,8"/>
+
+                <Grid Grid.Row="2">
+                    <ScrollViewer VerticalScrollBarVisibility="Auto">
+                        <ItemsControl x:Name="VideoServersItemsControl">
+                            <ItemsControl.ItemTemplate>
+                                <DataTemplate>
+                                    <materialDesign:Card Margin="4,4,4,4" Padding="12">
+                                        <Grid>
+                                            <Grid.ColumnDefinitions>
+                                                <ColumnDefinition Width="Auto"/>
+                                                <ColumnDefinition Width="*"/>
+                                                <ColumnDefinition Width="Auto"/>
+                                            </Grid.ColumnDefinitions>
+
+                                            <materialDesign:PackIcon Grid.Column="0" Kind="VideoBox"
+                                                                      Width="28" Height="28"
+                                                                      VerticalAlignment="Center"
+                                                                      Foreground="{DynamicResource MaterialDesign.Brush.Primary}"/>
+
+                                            <StackPanel Grid.Column="1" Margin="12,0" VerticalAlignment="Center">
+                                                <TextBlock Text="{Binding DisplayName}" FontWeight="Medium" FontSize="15"/>
+                                                <TextBlock Opacity="0.6" FontSize="11">
+                                                    <Run Text="{Binding Address, Mode=OneWay}"/>
+                                                    <Run Text=":"/>
+                                                    <Run Text="{Binding Port, Mode=OneWay}"/>
+                                                </TextBlock>
+                                            </StackPanel>
+
+                                            <Button Grid.Column="2"
+                                                    AutomationProperties.AutomationId="WatchVideoServerButton"
+                                                    Style="{StaticResource MaterialDesignRaisedLightButton}"
+                                                    Tag="{Binding}"
+                                                    Click="WatchVideoServer_Click">
+                                                <StackPanel Orientation="Horizontal">
+                                                    <materialDesign:PackIcon Kind="Play" Margin="0,0,6,0" Foreground="white"/>
+                                                    <TextBlock Text="觀看" Foreground="white"/>
+                                                </StackPanel>
+                                            </Button>
+                                        </Grid>
+                                    </materialDesign:Card>
+                                </DataTemplate>
+                            </ItemsControl.ItemTemplate>
+                        </ItemsControl>
+                    </ScrollViewer>
+
+                    <StackPanel x:Name="VideoServersEmptyStateStackPanel" HorizontalAlignment="Center" VerticalAlignment="Center">
+                        <materialDesign:PackIcon Kind="Magnify" Width="48" Height="48" Opacity="0.3"
+                                                  HorizontalAlignment="Center"/>
+                        <TextBlock Text="尚未找到影片伺服器" Opacity="0.5" Margin="0,8,0,0" HorizontalAlignment="Center"/>
+                    </StackPanel>
+                </Grid>
+            </Grid>
+
             <!-- ===================== 設定畫面 ===================== -->
             <Grid x:Name="SettingsViewRoot" AutomationProperties.AutomationId="SettingsViewRoot"
                   Margin="16" Visibility="Collapsed">
@@ -319,6 +431,27 @@
                         </StackPanel>
                     </materialDesign:Card>
                 </StackPanel>
+            </Grid>
+
+            <!-- ===================== 影片網站畫面(嵌入式瀏覽器) ===================== -->
+            <Grid x:Name="VideoWebViewRoot" AutomationProperties.AutomationId="VideoWebViewRoot" Visibility="Collapsed">
+                <Grid.RowDefinitions>
+                    <RowDefinition Height="Auto"/>
+                    <RowDefinition Height="*"/>
+                </Grid.RowDefinitions>
+
+                <materialDesign:ColorZone Grid.Row="0" Mode="PrimaryMid">
+                    <StackPanel Orientation="Horizontal" Margin="4">
+                        <Button AutomationProperties.AutomationId="VideoWebViewBackButton"
+                                Style="{StaticResource MaterialDesignIconButton}"
+                                ToolTip="返回" Click="VideoWebViewBackButton_Click">
+                            <materialDesign:PackIcon Kind="ArrowLeft" Width="22" Height="22"/>
+                        </Button>
+                        <TextBlock x:Name="VideoWebViewTitleText" VerticalAlignment="Center" Margin="8,0,0,0" FontWeight="Medium"/>
+                    </StackPanel>
+                </materialDesign:ColorZone>
+
+                <wv2:WebView2 x:Name="VideoWebView" Grid.Row="1"/>
             </Grid>
 
             <materialDesign:Snackbar x:Name="MainSnackbar"

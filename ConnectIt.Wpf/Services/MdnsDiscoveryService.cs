@@ -15,12 +15,23 @@ namespace ConnectIt.Wpf.Services;
 /// </summary>
 public sealed class MdnsDiscoveryService : IDisposable
 {
-    public const string ServiceType = "_connectit._tcp";
+    public const string DefaultServiceType = "_connectit._tcp";
+
+    /// <summary>這個實例廣播/搜尋的 DNS-SD 服務類型。不同用途(裝置配對、影片伺服器…)
+    /// 用不同的服務類型,各自建立一個獨立的 <see cref="MdnsDiscoveryService"/> 實例,
+    /// 彼此的廣播/搜尋互不干擾(這個類別本身沒有任何靜態共用狀態)。</summary>
+    public string ServiceType { get; }
 
     // 完整實體名稱的結尾樣式,例如 "手機A._connectit._tcp.local" 結尾是 "._connectit._tcp.local"。
     // mDNS 是廣播式協定,同一網段上其他 App(Chromecast、印表機、Visual Studio 配對等)
     // 的服務公告也會被我們收到,必須用這個結尾比對過濾掉,只留下真的有開啟本 App 的裝置。
-    private const string ServiceTypeSuffix = "." + ServiceType + ".local";
+    private readonly string _serviceTypeSuffix;
+
+    public MdnsDiscoveryService(string serviceType = DefaultServiceType)
+    {
+        ServiceType = serviceType;
+        _serviceTypeSuffix = "." + serviceType + ".local";
+    }
 
     // 對方正常關閉 App 時會送出 mDNS goodbye 封包(ServiceInstanceShutdown),但那是
     // fire-and-forget 的 UDP,可能遺失,對方如果是被強制關閉/當機/斷網則完全不會送出。
@@ -139,7 +150,9 @@ public sealed class MdnsDiscoveryService : IDisposable
     /// 只挑選有預設閘道的實體網卡位址(通常是 Wi-Fi/有線網卡),
     /// 避免把 WSL、Hyper-V、VPN 等虛擬網卡的 IP 廣播出去導致 Android 連不到。
     /// </summary>
-    private static List<IPAddress> GetRoutableIPv4Addresses()
+    /// <summary>internal 而非 private:<see cref="VideoStreamingService"/> 綁定 HTTP 伺服器時重用同一套
+    /// 「只挑真正可路由的網卡位址」邏輯,不用另外複製一份。</summary>
+    internal static List<IPAddress> GetRoutableIPv4Addresses()
     {
         var addresses = new List<IPAddress>();
 
@@ -206,8 +219,8 @@ public sealed class MdnsDiscoveryService : IDisposable
         _mdns!.SendQuery(e.ServiceInstanceName, type: DnsType.SRV);
     }
 
-    private static bool IsConnectItInstance(DomainName name) =>
-        name.ToString().EndsWith(ServiceTypeSuffix, StringComparison.OrdinalIgnoreCase);
+    private bool IsConnectItInstance(DomainName name) =>
+        name.ToString().EndsWith(_serviceTypeSuffix, StringComparison.OrdinalIgnoreCase);
 
     private bool IsSelf(DomainName instanceName) =>
         _selfProfile != null && instanceName == _selfProfile.FullyQualifiedName;

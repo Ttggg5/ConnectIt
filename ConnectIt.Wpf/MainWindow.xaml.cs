@@ -30,6 +30,15 @@ public partial class MainWindow : Window
     private readonly DiscoverySettingsService _discoverySettings = new();
     private readonly ObservableCollection<DiscoveredDevice> _devices = new();
 
+    // 影片伺服器功能是完全獨立於裝置配對連線的:自己一組 mDNS 服務類型(廣播/搜尋「誰開了影片伺服器」)、
+    // 自己一組 HTTP 伺服器,不會用到 _connection。觀看端直接用內嵌瀏覽器(WebView2)開啟對方伺服器
+    // 提供的網頁(首頁清單 + 觀看頁,見 VideoStreamingService),不需要 App 自己實作播放器/清單畫面。
+    private readonly MdnsDiscoveryService _videoDiscovery = new("_connectit-video._tcp");
+    private readonly VideoStreamingService _videoStreaming = new();
+    private readonly ObservableCollection<DiscoveredDevice> _videoServers = new();
+
+    private DiscoveredDevice? _activeVideoServer;
+
     private CancellationTokenSource? _searchCts;
 
     // 收到檔案傳輸提議時開出的確認對話框:記著是哪個 transferId,這樣如果對方在使用者回應前就
@@ -63,6 +72,13 @@ public partial class MainWindow : Window
         _connection.FileTransferEnded += OnFileTransferEnded;
         _connection.FolderTransferEnded += OnFolderTransferEnded;
 
+        VideoServersItemsControl.ItemsSource = _videoServers;
+        _videoServers.CollectionChanged += (_, _) => UpdateVideoServersEmptyState();
+        _videoDiscovery.DeviceDiscovered += OnVideoServerDiscovered;
+        _videoDiscovery.DeviceRemoved += OnVideoServerRemoved;
+        _videoDiscovery.StatusChanged += OnServiceStatusChanged;
+        _videoStreaming.StatusChanged += OnServiceStatusChanged;
+
         _themeService.Initialize(this);
         SetThemeRadioButtonForMode(_themeService.CurrentMode);
 
@@ -79,6 +95,10 @@ public partial class MainWindow : Window
             _discovery.Dispose();
             _connection.Dispose();
             _themeService.Dispose();
+
+            VideoWebView.Dispose();
+            _videoStreaming.Dispose();
+            _videoDiscovery.Dispose();
         };
     }
 
@@ -111,6 +131,9 @@ public partial class MainWindow : Window
         AdvertiseCurrentName();
 
         StartSearchCycle();
+
+        // 影片伺服器的「搜尋其他人開的影片伺服器」也是一開機就開始,不需要等使用者切到「影片」頁籤。
+        _videoDiscovery.Start();
     }
 
     private void AdvertiseCurrentName()
@@ -194,29 +217,54 @@ public partial class MainWindow : Window
     private enum AppPage
     {
         Devices,
+        Video,
         Settings,
+        VideoWebsite,
     }
 
     private void NavListBox_SelectionChanged(object sender, SelectionChangedEventArgs e)
     {
-        SetActivePage(NavListBox.SelectedIndex == 1 ? AppPage.Settings : AppPage.Devices);
+        SetActivePage(NavListBox.SelectedIndex switch
+        {
+            1 => AppPage.Video,
+            2 => AppPage.Settings,
+            _ => AppPage.Devices,
+        });
     }
 
-    /// <summary>切換導覽列選到的頁面。「裝置」頁會依目前是否已連線,顯示搜尋畫面或已連線畫面。</summary>
+    /// <summary>切換導覽列選到的頁面。「裝置」頁會依目前是否已連線,顯示搜尋畫面或已連線畫面。
+    /// 「影片網站」頁不對應任何導覽列項目,是從「影片」頁點「觀看」另外疊上去的。</summary>
     private void SetActivePage(AppPage page)
     {
-        if (page == AppPage.Settings)
+        if (page != AppPage.VideoWebsite && VideoWebView.CoreWebView2 != null)
         {
-            DiscoveryViewRoot.Visibility = Visibility.Collapsed;
-            ConnectedViewRoot.Visibility = Visibility.Collapsed;
-            SettingsViewRoot.Visibility = Visibility.Visible;
-            return;
+            // 離開網站頁時導到空白頁,順便停止裡面正在播放的影片。
+            VideoWebView.CoreWebView2.Navigate("about:blank");
         }
 
+        DiscoveryViewRoot.Visibility = Visibility.Collapsed;
+        ConnectedViewRoot.Visibility = Visibility.Collapsed;
+        VideoViewRoot.Visibility = Visibility.Collapsed;
         SettingsViewRoot.Visibility = Visibility.Collapsed;
-        var isConnected = _connection.IsConnected;
-        ConnectedViewRoot.Visibility = isConnected ? Visibility.Visible : Visibility.Collapsed;
-        DiscoveryViewRoot.Visibility = isConnected ? Visibility.Collapsed : Visibility.Visible;
+        VideoWebViewRoot.Visibility = Visibility.Collapsed;
+
+        switch (page)
+        {
+            case AppPage.Settings:
+                SettingsViewRoot.Visibility = Visibility.Visible;
+                break;
+            case AppPage.Video:
+                VideoViewRoot.Visibility = Visibility.Visible;
+                break;
+            case AppPage.VideoWebsite:
+                VideoWebViewRoot.Visibility = Visibility.Visible;
+                break;
+            default:
+                var isConnected = _connection.IsConnected;
+                ConnectedViewRoot.Visibility = isConnected ? Visibility.Visible : Visibility.Collapsed;
+                DiscoveryViewRoot.Visibility = isConnected ? Visibility.Collapsed : Visibility.Visible;
+                break;
+        }
     }
 
     private void ThemeRadioButton_Checked(object sender, RoutedEventArgs e)
@@ -919,5 +967,122 @@ public partial class MainWindow : Window
     {
         LogTextBox.AppendText($"[{DateTime.Now:HH:mm:ss}] {message}{Environment.NewLine}");
         LogTextBox.ScrollToEnd();
+    }
+
+    // ===================== 影片伺服器(主機端) =====================
+
+    private void StreamVideoButton_Click(object sender, RoutedEventArgs e)
+    {
+        var dialog = new OpenFileDialog { Title = "選擇要分享的影片", Filter = BuildVideoFileFilter() };
+        if (dialog.ShowDialog() == true)
+        {
+            StartVideoServer(dialog.FileName);
+        }
+    }
+
+    private void ShareVideoFolderButton_Click(object sender, RoutedEventArgs e)
+    {
+        var dialog = new OpenFolderDialog { Title = "選擇要分享的影片資料夾" };
+        if (dialog.ShowDialog() == true && dialog.FolderName is { Length: > 0 } folderPath)
+        {
+            StartVideoServer(folderPath);
+        }
+    }
+
+    private static string BuildVideoFileFilter()
+    {
+        var extensions = string.Join(';', VideoLibraryScanner.VideoExtensions.Select(ext => $"*{ext}"));
+        return $"影片檔案|{extensions}";
+    }
+
+    private void StartVideoServer(string path)
+    {
+        var name = string.IsNullOrWhiteSpace(DeviceNameTextBox.Text)
+            ? Environment.MachineName
+            : DeviceNameTextBox.Text.Trim();
+
+        _videoStreaming.Start(path, name);
+        if (!_videoStreaming.IsRunning)
+        {
+            return;
+        }
+
+        _videoDiscovery.Advertise(name, _videoStreaming.Port);
+
+        VideoServerStatusText.Text = $"執行中,共 {_videoStreaming.Manifest.Count} 部影片(連接埠 {_videoStreaming.Port})";
+        StreamVideoButton.Visibility = Visibility.Collapsed;
+        ShareVideoFolderButton.Visibility = Visibility.Collapsed;
+        StopVideoServerButton.Visibility = Visibility.Visible;
+    }
+
+    private void StopVideoServerButton_Click(object sender, RoutedEventArgs e)
+    {
+        _videoDiscovery.StopAdvertising();
+        _videoStreaming.Stop();
+
+        VideoServerStatusText.Text = "尚未開啟";
+        StreamVideoButton.Visibility = Visibility.Visible;
+        ShareVideoFolderButton.Visibility = Visibility.Visible;
+        StopVideoServerButton.Visibility = Visibility.Collapsed;
+    }
+
+    // ===================== 影片伺服器(觀看端:發現與瀏覽) =====================
+
+    private void OnVideoServerDiscovered(object? sender, DiscoveredDevice device)
+    {
+        Dispatcher.Invoke(() =>
+        {
+            var existing = _videoServers.FirstOrDefault(d => d.Key == device.Key);
+            if (existing != null)
+            {
+                var index = _videoServers.IndexOf(existing);
+                _videoServers[index] = device;
+            }
+            else
+            {
+                _videoServers.Add(device);
+                AppendLog($"找到影片伺服器:{device.DisplayName} ({device.Address}:{device.Port})");
+            }
+        });
+    }
+
+    private void OnVideoServerRemoved(object? sender, string instanceName)
+    {
+        Dispatcher.Invoke(() =>
+        {
+            var existing = _videoServers.FirstOrDefault(d => d.Key == instanceName);
+            if (existing != null)
+            {
+                _videoServers.Remove(existing);
+                AppendLog($"影片伺服器已離線:{existing.DisplayName}");
+            }
+        });
+    }
+
+    private void UpdateVideoServersEmptyState()
+    {
+        VideoServersEmptyStateStackPanel.Visibility = _videoServers.Count == 0 ? Visibility.Visible : Visibility.Collapsed;
+    }
+
+    /// <summary>點「觀看」直接用內嵌瀏覽器開啟對方影片伺服器的網站(首頁清單/單片直接跳轉、觀看頁
+    /// 都是伺服器端組好的 HTML,見 <see cref="VideoStreamingService"/>),App 這邊不用自己解析
+    /// manifest 或實作播放器 UI。</summary>
+    private void WatchVideoServer_Click(object sender, RoutedEventArgs e)
+    {
+        if (sender is not Button { Tag: DiscoveredDevice server })
+        {
+            return;
+        }
+
+        _activeVideoServer = server;
+        VideoWebViewTitleText.Text = server.DisplayName;
+        VideoWebView.Source = new Uri($"http://{server.Address}:{server.Port}/");
+
+        SetActivePage(AppPage.VideoWebsite);
+    }
+
+    private void VideoWebViewBackButton_Click(object sender, RoutedEventArgs e)
+    {
+        SetActivePage(AppPage.Video);
     }
 }
