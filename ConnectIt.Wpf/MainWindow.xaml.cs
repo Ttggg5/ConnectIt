@@ -72,6 +72,7 @@ public partial class MainWindow : Window
         NavListBox.SelectedIndex = 0;
 
         Loaded += MainWindow_Loaded;
+        Closing += MainWindow_Closing;
         Closed += (_, _) =>
         {
             _searchCts?.Cancel();
@@ -79,6 +80,27 @@ public partial class MainWindow : Window
             _connection.Dispose();
             _themeService.Dispose();
         };
+    }
+
+    private bool _hasShownBackgroundNotification;
+
+    /// <summary>按下視窗的關閉鈕時,改成隱藏到系統匣而不是真正結束程式,讓裝置探索/連線繼續在背景運作。
+    /// 只有透過系統匣選單按「結束」(<see cref="App.IsExiting"/> 為 true)才會真的關閉視窗。</summary>
+    private void MainWindow_Closing(object? sender, System.ComponentModel.CancelEventArgs e)
+    {
+        if (((App)Application.Current).IsExiting)
+        {
+            return;
+        }
+
+        e.Cancel = true;
+        Hide();
+
+        if (!_hasShownBackgroundNotification)
+        {
+            _hasShownBackgroundNotification = true;
+            ((App)Application.Current).ShowBackgroundNotification();
+        }
     }
 
     private void MainWindow_Loaded(object sender, RoutedEventArgs e)
