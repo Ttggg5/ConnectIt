@@ -9,4 +9,7 @@ public sealed class VideoManifestEntry
     public required string RelativePath { get; init; }
 
     public required long Size { get; init; }
+
+    /// <summary>檔案最後修改時間(UTC),用來支援「依修改時間排序」。</summary>
+    public required DateTime Modified { get; init; }
 }

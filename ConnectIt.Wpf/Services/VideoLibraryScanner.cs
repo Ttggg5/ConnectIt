@@ -28,33 +28,41 @@ public static class VideoLibraryScanner
             ? BuildSingleFileEntries(path)
             : BuildFolderEntries(path);
 
+        // 依相對路徑排序,讓首頁清單順序穩定,同時也讓「上一部/下一部」照著這個順序前進有意義。
+        files = files.OrderBy(f => f.RelativePath, StringComparer.OrdinalIgnoreCase).ToList();
+
         var manifest = new List<VideoManifestEntry>();
         var filesByRelativePath = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
 
-        foreach (var (fullPath, relativePath, size) in files)
+        foreach (var (fullPath, relativePath, size, modified) in files)
         {
-            manifest.Add(new VideoManifestEntry { Name = Path.GetFileName(fullPath), RelativePath = relativePath, Size = size });
+            manifest.Add(new VideoManifestEntry { Name = Path.GetFileName(fullPath), RelativePath = relativePath, Size = size, Modified = modified });
             filesByRelativePath[relativePath] = fullPath;
         }
 
         return (manifest, filesByRelativePath);
     }
 
-    private static List<(string FullPath, string RelativePath, long Size)> BuildSingleFileEntries(string filePath)
+    private static List<(string FullPath, string RelativePath, long Size, DateTime Modified)> BuildSingleFileEntries(string filePath)
     {
         var info = new FileInfo(filePath);
-        return [(info.FullName, info.Name, info.Length)];
+        return [(info.FullName, info.Name, info.Length, info.LastWriteTimeUtc)];
     }
 
-    private static List<(string FullPath, string RelativePath, long Size)> BuildFolderEntries(string folderPath)
+    private static List<(string FullPath, string RelativePath, long Size, DateTime Modified)> BuildFolderEntries(string folderPath)
     {
         var root = new DirectoryInfo(folderPath).FullName;
         return Directory.EnumerateFiles(root, "*", SearchOption.AllDirectories)
             .Where(IsVideoFile)
-            .Select(fullPath => (
-                FullPath: fullPath,
-                RelativePath: Path.GetRelativePath(root, fullPath).Replace('\\', '/'),
-                Size: new FileInfo(fullPath).Length))
+            .Select(fullPath =>
+            {
+                var info = new FileInfo(fullPath);
+                return (
+                    FullPath: fullPath,
+                    RelativePath: Path.GetRelativePath(root, fullPath).Replace('\\', '/'),
+                    Size: info.Length,
+                    Modified: info.LastWriteTimeUtc);
+            })
             .ToList();
     }
 }
