@@ -22,9 +22,17 @@ public sealed class MdnsDiscoveryService : IDisposable
     // 的服務公告也會被我們收到,必須用這個結尾比對過濾掉,只留下真的有開啟本 App 的裝置。
     private const string ServiceTypeSuffix = "." + ServiceType + ".local";
 
+    // 對方正常關閉 App 時會送出 mDNS goodbye 封包(ServiceInstanceShutdown),但那是
+    // fire-and-forget 的 UDP,可能遺失,對方如果是被強制關閉/當機/斷網則完全不會送出。
+    // 所以額外用「多久沒再收到回應」做逾時偵測,當作保險機制。
+    private static readonly TimeSpan HeartbeatInterval = TimeSpan.FromSeconds(5);
+    private static readonly TimeSpan StaleTimeout = TimeSpan.FromSeconds(15);
+
     private MulticastService? _mdns;
     private ServiceDiscovery? _sd;
     private ServiceProfile? _selfProfile;
+    private System.Threading.Timer? _heartbeatTimer;
+    private readonly ConcurrentDictionary<string, DateTime> _lastSeenUtc = new();
 
     // 用「自己廣播出去的 IP + Port」而不是單純比對名稱字串來判斷是不是自己,
     // 這樣就算 DomainName 比對有大小寫/句點結尾等差異也不會漏判。
@@ -61,7 +69,26 @@ public sealed class MdnsDiscoveryService : IDisposable
         _mdns.NetworkInterfaceDiscovered += (_, _) => _sd.QueryServiceInstances(ServiceType);
 
         _mdns.Start();
+        _heartbeatTimer = new System.Threading.Timer(_ => OnHeartbeatTick(), null, HeartbeatInterval, HeartbeatInterval);
         Log("mDNS 已啟動,正在搜尋裝置...");
+    }
+
+    /// <summary>
+    /// 定期重送查詢(維持對方裝置的存活時間)並清掉太久沒回應的裝置,
+    /// 當作對方沒送出/送丟 goodbye 封包時的保險機制。
+    /// </summary>
+    private void OnHeartbeatTick()
+    {
+        _sd?.QueryServiceInstances(ServiceType);
+
+        var cutoff = DateTime.UtcNow - StaleTimeout;
+        foreach (var (instanceName, lastSeen) in _lastSeenUtc)
+        {
+            if (lastSeen < cutoff && _lastSeenUtc.TryRemove(instanceName, out _))
+            {
+                DeviceRemoved?.Invoke(this, instanceName);
+            }
+        }
     }
 
     /// <summary>主動重新送出搜尋請求(例如使用者按下重新整理)。</summary>
@@ -187,6 +214,7 @@ public sealed class MdnsDiscoveryService : IDisposable
 
     private void OnServiceInstanceShutdown(object? sender, ServiceInstanceShutdownEventArgs e)
     {
+        _lastSeenUtc.TryRemove(e.ServiceInstanceName.ToString(), out _);
         DeviceRemoved?.Invoke(this, e.ServiceInstanceName.ToString());
     }
 
@@ -244,6 +272,8 @@ public sealed class MdnsDiscoveryService : IDisposable
             return;
         }
 
+        _lastSeenUtc[instance.ToString()] = DateTime.UtcNow;
+
         var device = new DiscoveredDevice
         {
             InstanceName = instance.ToString(),
@@ -259,6 +289,10 @@ public sealed class MdnsDiscoveryService : IDisposable
 
     public void Stop()
     {
+        _heartbeatTimer?.Dispose();
+        _heartbeatTimer = null;
+        _lastSeenUtc.Clear();
+
         if (_sd != null)
         {
             if (_selfProfile != null)
