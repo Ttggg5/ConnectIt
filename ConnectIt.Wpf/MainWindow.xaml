@@ -275,6 +275,22 @@
 
                     <materialDesign:Card Padding="16" Margin="0,16,0,0">
                         <StackPanel>
+                            <TextBlock Text="搜尋設定" FontWeight="Medium" FontSize="15"/>
+                            <TextBlock Text="開啟 App 時自動搜尋裝置的秒數(預設 30 秒)。" Opacity="0.6" FontSize="12"
+                                       Margin="0,4,0,16" TextWrapping="Wrap"/>
+
+                            <TextBox x:Name="SearchDurationTextBox" AutomationProperties.AutomationId="SearchDurationTextBox"
+                                     materialDesign:HintAssist.Hint="搜尋秒數"
+                                     Style="{StaticResource MaterialDesignOutlinedTextBox}"
+                                     Width="120" HorizontalAlignment="Left"
+                                     PreviewTextInput="SearchDurationTextBox_PreviewTextInput"
+                                     KeyDown="SearchDurationTextBox_KeyDown"
+                                     LostFocus="SearchDurationTextBox_LostFocus"/>
+                        </StackPanel>
+                    </materialDesign:Card>
+
+                    <materialDesign:Card Padding="16" Margin="0,16,0,0">
+                        <StackPanel>
                             <TextBlock Text="檔案接收" FontWeight="Medium" FontSize="15"/>
                             <TextBlock Text="收到的檔案會儲存到這個資料夾。" Opacity="0.6" FontSize="12"
                                        Margin="0,4,0,16" TextWrapping="Wrap"/>

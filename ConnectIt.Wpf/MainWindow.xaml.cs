@@ -15,9 +15,10 @@ namespace ConnectIt.Wpf;
 
 public partial class MainWindow : Window
 {
-    private static readonly TimeSpan AutoSearchDuration = TimeSpan.FromSeconds(30);
+    // 開啟 App 時自動搜尋裝置的秒數,可在設定頁調整(預設值見 DiscoverySettingsService)。
+    private TimeSpan AutoSearchDuration => TimeSpan.FromSeconds(_discoverySettings.SearchDurationSeconds);
 
-    // 搜尋期間內每隔幾秒就重送一次查詢,而不是只查一次就等 30 秒。
+    // 搜尋期間內每隔幾秒就重送一次查詢,而不是只查一次就等到搜尋時間結束。
     // 兩台裝置如果幾乎同時啟動,單次查詢很容易在對方還沒完成廣播註冊前就送出而互相找不到對方,
     // 定期重試可以避開這種啟動時機的競爭問題。
     private static readonly TimeSpan SearchQueryInterval = TimeSpan.FromSeconds(3);
@@ -26,6 +27,7 @@ public partial class MainWindow : Window
     private readonly ConnectionService _connection = new();
     private readonly ThemeService _themeService = new();
     private readonly FileTransferSettingsService _fileTransferSettings = new();
+    private readonly DiscoverySettingsService _discoverySettings = new();
     private readonly ObservableCollection<DiscoveredDevice> _devices = new();
 
     private CancellationTokenSource? _searchCts;
@@ -59,6 +61,7 @@ public partial class MainWindow : Window
         SetThemeRadioButtonForMode(_themeService.CurrentMode);
 
         DownloadFolderTextBox.Text = _fileTransferSettings.DownloadFolder;
+        SearchDurationTextBox.Text = _discoverySettings.SearchDurationSeconds.ToString();
 
         NavListBox.SelectedIndex = 0;
 
@@ -220,6 +223,33 @@ public partial class MainWindow : Window
             _fileTransferSettings.SetDownloadFolder(folder);
             DownloadFolderTextBox.Text = _fileTransferSettings.DownloadFolder;
         }
+    }
+
+    private void SearchDurationTextBox_PreviewTextInput(object sender, TextCompositionEventArgs e)
+    {
+        e.Handled = !e.Text.All(char.IsDigit);
+    }
+
+    private void SearchDurationTextBox_KeyDown(object sender, KeyEventArgs e)
+    {
+        if (e.Key == Key.Enter)
+        {
+            ApplySearchDuration();
+            Keyboard_ClearFocus();
+        }
+    }
+
+    private void SearchDurationTextBox_LostFocus(object sender, RoutedEventArgs e) => ApplySearchDuration();
+
+    /// <summary>套用搜尋秒數設定,超出合理範圍會被夾住,並把夾住後的值顯示回輸入框。</summary>
+    private void ApplySearchDuration()
+    {
+        if (!int.TryParse(SearchDurationTextBox.Text, out var seconds))
+        {
+            seconds = DiscoverySettingsService.DefaultSearchDurationSeconds;
+        }
+
+        SearchDurationTextBox.Text = _discoverySettings.SetSearchDurationSeconds(seconds).ToString();
     }
 
     private void UpdateEmptyState()
