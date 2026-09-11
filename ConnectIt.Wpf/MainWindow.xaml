@@ -190,6 +190,14 @@
                                 <TextBlock Text="傳送檔案"/>
                             </StackPanel>
                         </Button>
+                        <Button x:Name="SendFolderButton" AutomationProperties.AutomationId="SendFolderButton"
+                                Style="{StaticResource MaterialDesignOutlinedButton}"
+                                Height="Auto" Padding="20,10" Margin="0,0,12,0" Click="SendFolderButton_Click">
+                            <StackPanel Orientation="Horizontal">
+                                <materialDesign:PackIcon Kind="FolderUpload" Margin="0,0,8,0"/>
+                                <TextBlock Text="傳送資料夾"/>
+                            </StackPanel>
+                        </Button>
                         <Button AutomationProperties.AutomationId="DisconnectButton"
                                 Style="{StaticResource MaterialDesignOutlinedButton}"
                                 Height="Auto" Padding="20,10" Click="DisconnectButton_Click">
@@ -200,7 +208,7 @@
                         </Button>
                     </StackPanel>
 
-                    <TextBlock Text="或把檔案拖曳到這個視窗來傳送" Opacity="0.5" FontSize="11"
+                    <TextBlock Text="或把檔案/資料夾拖曳到這個視窗來傳送" Opacity="0.5" FontSize="11"
                                Margin="0,12,0,0" HorizontalAlignment="Center"/>
                 </StackPanel>
 
@@ -227,7 +235,7 @@
                 <Border x:Name="DropOverlay" Grid.RowSpan="2" Background="#66000000" Visibility="Collapsed" IsHitTestVisible="False">
                     <StackPanel VerticalAlignment="Center" HorizontalAlignment="Center">
                         <materialDesign:PackIcon Kind="FileUpload" Width="48" Height="48" Foreground="White" HorizontalAlignment="Center"/>
-                        <TextBlock Text="放開以傳送檔案" Foreground="White" FontSize="16" Margin="0,8,0,0" HorizontalAlignment="Center"/>
+                        <TextBlock Text="放開以傳送" Foreground="White" FontSize="16" Margin="0,8,0,0" HorizontalAlignment="Center"/>
                     </StackPanel>
                 </Border>
             </Grid>

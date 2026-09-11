@@ -37,6 +37,10 @@ public partial class MainWindow : Window
     private TaskCompletionSource<bool>? _pendingFileOfferTcs;
     private string? _pendingFileOfferTransferId;
 
+    // 資料夾傳輸提議的確認對話框,道理跟上面的檔案提議一樣。
+    private TaskCompletionSource<bool>? _pendingFolderOfferTcs;
+    private string? _pendingFolderOfferTransferId;
+
     public MainWindow()
     {
         InitializeComponent();
@@ -54,8 +58,10 @@ public partial class MainWindow : Window
         _connection.Connected += OnConnected;
         _connection.RemoteDisconnected += OnRemoteDisconnected;
         _connection.FileOffered += OnFileOffered;
+        _connection.FolderOffered += OnFolderOffered;
         _connection.FileTransferProgress += OnFileTransferProgress;
         _connection.FileTransferEnded += OnFileTransferEnded;
+        _connection.FolderTransferEnded += OnFolderTransferEnded;
 
         _themeService.Initialize(this);
         SetThemeRadioButtonForMode(_themeService.CurrentMode);
@@ -411,10 +417,19 @@ public partial class MainWindow : Window
 
     private async void SendFileButton_Click(object sender, RoutedEventArgs e)
     {
-        var dialog = new OpenFileDialog { Title = "選擇要傳送的檔案" };
+        var dialog = new OpenFileDialog { Title = "選擇要傳送的檔案", Multiselect = true };
         if (dialog.ShowDialog() == true)
         {
-            await StartSendFileAsync(dialog.FileName);
+            await StartSendFilesAsync(dialog.FileNames);
+        }
+    }
+
+    private async void SendFolderButton_Click(object sender, RoutedEventArgs e)
+    {
+        var dialog = new OpenFolderDialog { Title = "選擇要傳送的資料夾" };
+        if (dialog.ShowDialog() == true && dialog.FolderName is { Length: > 0 } folderPath)
+        {
+            await StartSendFolderAsync(folderPath);
         }
     }
 
@@ -445,14 +460,46 @@ public partial class MainWindow : Window
             return;
         }
 
-        var filePath = ((string[])e.Data.GetData(DataFormats.FileDrop)!).FirstOrDefault(File.Exists);
-        if (filePath != null)
+        var paths = (string[])e.Data.GetData(DataFormats.FileDrop)!;
+        var filePaths = paths.Where(File.Exists).ToArray();
+        if (filePaths.Length > 0)
         {
-            await StartSendFileAsync(filePath);
+            await StartSendFilesAsync(filePaths);
+            return;
+        }
+
+        var folderPath = paths.FirstOrDefault(Directory.Exists);
+        if (folderPath != null)
+        {
+            await StartSendFolderAsync(folderPath);
         }
     }
 
-    private async Task StartSendFileAsync(string filePath)
+    private async Task StartSendFilesAsync(IReadOnlyList<string> filePaths)
+    {
+        if (filePaths.Count == 0)
+        {
+            return;
+        }
+
+        if (_connection.IsFileTransferActive)
+        {
+            MainSnackbar.MessageQueue?.Enqueue("目前已有檔案傳輸正在進行,請稍後再試。");
+            return;
+        }
+
+        if (filePaths.Count == 1)
+        {
+            ShowFileTransferPanel(Path.GetFileName(filePaths[0]), "等待對方接受...");
+            await _connection.SendFileAsync(filePaths[0]);
+            return;
+        }
+
+        ShowFileTransferPanel($"{filePaths.Count} 個檔案", "等待對方接受...");
+        await _connection.SendFilesAsync(filePaths);
+    }
+
+    private async Task StartSendFolderAsync(string folderPath)
     {
         if (_connection.IsFileTransferActive)
         {
@@ -460,8 +507,8 @@ public partial class MainWindow : Window
             return;
         }
 
-        ShowFileTransferPanel(Path.GetFileName(filePath), "等待對方接受...");
-        await _connection.SendFileAsync(filePath);
+        ShowFileTransferPanel(Path.GetFileName(folderPath.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar)), "等待對方接受...");
+        await _connection.SendFolderAsync(folderPath);
     }
 
     private void CancelFileTransferButton_Click(object sender, RoutedEventArgs e)
@@ -576,12 +623,125 @@ public partial class MainWindow : Window
         return tcs.Task;
     }
 
+    private void OnFolderOffered(object? sender, FolderOfferedEventArgs e)
+    {
+        // 跟 OnFileOffered 一樣,這是從背景的 TCP 讀取迴圈觸發的,要排到 UI 執行緒處理。
+        Dispatcher.BeginInvoke(() => _ = HandleFolderOfferedAsync(e));
+    }
+
+    private async Task HandleFolderOfferedAsync(FolderOfferedEventArgs e)
+    {
+        var accepted = await ShowFolderOfferDialog(e.TransferId, e.FolderName, e.TotalSize, e.TotalEntries, e.IsBatch);
+        _pendingFolderOfferTcs = null;
+        _pendingFolderOfferTransferId = null;
+
+        _connection.RespondToFolderOffer(e.TransferId, accepted, _fileTransferSettings.DownloadFolder);
+
+        if (accepted)
+        {
+            var panelName = e.IsBatch ? $"{e.TotalEntries} 個檔案" : e.FolderName;
+            ShowFileTransferPanel(panelName, $"接收中...(共 {e.TotalEntries} 個檔案)");
+        }
+    }
+
+    /// <summary>必須在 UI 執行緒上呼叫。跟 <see cref="ShowFileOfferDialog"/> 同樣的對話框樣式,問使用者要不要接收整個資料夾/多個檔案。</summary>
+    private Task<bool> ShowFolderOfferDialog(string transferId, string folderName, long totalSize, int totalEntries, bool isBatch)
+    {
+        var panel = new StackPanel { MinWidth = 280, HorizontalAlignment = HorizontalAlignment.Center };
+        panel.Children.Add(new PackIcon
+        {
+            Kind = isBatch ? PackIconKind.FileMultiple : PackIconKind.FolderDownload,
+            Width = 40,
+            Height = 40,
+            HorizontalAlignment = HorizontalAlignment.Center,
+            Foreground = (Brush)FindResource("MaterialDesign.Brush.Primary"),
+        });
+        panel.Children.Add(new TextBlock
+        {
+            Text = isBatch ? "對方想要傳送多個檔案給你" : "對方想要傳送資料夾給你",
+            FontSize = 16,
+            FontWeight = FontWeights.Medium,
+            TextWrapping = TextWrapping.Wrap,
+            TextAlignment = TextAlignment.Center,
+            Margin = new Thickness(0, 16, 0, 4),
+        });
+        panel.Children.Add(new TextBlock
+        {
+            Text = isBatch
+                ? $"{totalEntries} 個檔案,共 {FormatBytes(totalSize)}"
+                : $"{folderName}({totalEntries} 個檔案,共 {FormatBytes(totalSize)})",
+            Opacity = 0.6,
+            FontSize = 12,
+            TextWrapping = TextWrapping.Wrap,
+            TextAlignment = TextAlignment.Center,
+            HorizontalAlignment = HorizontalAlignment.Center,
+            Margin = new Thickness(0, 0, 0, 20),
+        });
+
+        var buttonPanel = new StackPanel { Orientation = Orientation.Horizontal, HorizontalAlignment = HorizontalAlignment.Center };
+        var rejectButton = new Button
+        {
+            Content = "拒絕",
+            Style = (Style)FindResource("MaterialDesignFlatButton"),
+            Margin = new Thickness(0, 0, 8, 0),
+        };
+        var acceptButton = new Button
+        {
+            Content = "接受",
+            Style = (Style)FindResource("MaterialDesignRaisedButton"),
+        };
+        System.Windows.Automation.AutomationProperties.SetAutomationId(rejectButton, "RejectFolderButton");
+        System.Windows.Automation.AutomationProperties.SetAutomationId(acceptButton, "AcceptFolderButton");
+        buttonPanel.Children.Add(rejectButton);
+        buttonPanel.Children.Add(acceptButton);
+        panel.Children.Add(buttonPanel);
+
+        var tcs = new TaskCompletionSource<bool>();
+        _pendingFolderOfferTcs = tcs;
+        _pendingFolderOfferTransferId = transferId;
+
+        rejectButton.Click += (_, _) =>
+        {
+            DialogHost.Close("RootDialog");
+            tcs.TrySetResult(false);
+        };
+        acceptButton.Click += (_, _) =>
+        {
+            DialogHost.Close("RootDialog");
+            tcs.TrySetResult(true);
+        };
+
+        var card = new Border
+        {
+            Background = (Brush)FindResource("MaterialDesignPaper"),
+            CornerRadius = new CornerRadius(4),
+            Padding = new Thickness(24),
+            HorizontalAlignment = HorizontalAlignment.Center,
+            VerticalAlignment = VerticalAlignment.Center,
+            Child = panel,
+        };
+
+        _ = DialogHost.Show(card, "RootDialog");
+        return tcs.Task;
+    }
+
     private void OnFileTransferProgress(object? sender, FileTransferProgressEventArgs e)
     {
         Dispatcher.BeginInvoke(() =>
         {
-            var percent = e.TotalBytes > 0 ? (double)e.BytesTransferred / e.TotalBytes * 100 : 100;
-            FileTransferProgressBar.Value = percent;
+            if (e.FolderTransferId != null && e.TotalEntries is { } totalEntries)
+            {
+                var folderBytesTransferred = e.FolderBytesTransferred ?? e.BytesTransferred;
+                var folderTotalBytes = e.FolderTotalBytes ?? e.TotalBytes;
+                var percent = folderTotalBytes > 0 ? (double)folderBytesTransferred / folderTotalBytes * 100 : 100;
+                FileTransferProgressBar.Value = percent;
+                FileTransferStatusText.Text =
+                    $"第 {e.EntryIndex}/{totalEntries} 個檔案:{e.FileName}({FormatBytes(folderBytesTransferred)} / {FormatBytes(folderTotalBytes)})";
+                return;
+            }
+
+            var singlePercent = e.TotalBytes > 0 ? (double)e.BytesTransferred / e.TotalBytes * 100 : 100;
+            FileTransferProgressBar.Value = singlePercent;
             FileTransferStatusText.Text = $"{FormatBytes(e.BytesTransferred)} / {FormatBytes(e.TotalBytes)}";
         });
     }
@@ -611,6 +771,49 @@ public partial class MainWindow : Window
                 FileTransferEndReason.ConnectionClosed => $"連線已中斷,「{e.FileName}」的傳輸已中止。",
                 _ => $"「{e.FileName}」傳輸失敗。",
             };
+
+            MainSnackbar.MessageQueue?.Enqueue(message);
+            AppendLog(message);
+        });
+    }
+
+    private void OnFolderTransferEnded(object? sender, FolderTransferEndedEventArgs e)
+    {
+        Dispatcher.BeginInvoke(() =>
+        {
+            // 如果對方在使用者回應提議之前就把傳輸結束掉(例如取消提議),
+            // 把還開著的確認對話框強制關掉,不然它會一直卡在畫面上。
+            if (e.TransferId == _pendingFolderOfferTransferId && _pendingFolderOfferTcs is { Task.IsCompleted: false } tcs)
+            {
+                DialogHost.Close("RootDialog");
+                tcs.TrySetResult(false);
+            }
+
+            FileTransferCard.Visibility = Visibility.Collapsed;
+
+            var message = e.IsBatch
+                ? e.Reason switch
+                {
+                    FileTransferEndReason.Completed when e.Direction == FileTransferDirection.Receiving =>
+                        $"已收到 {e.EntryCount} 個檔案,已儲存到 {_fileTransferSettings.DownloadFolder}。",
+                    FileTransferEndReason.Completed => $"{e.EntryCount} 個檔案傳送完成。",
+                    FileTransferEndReason.Rejected => "對方拒絕接收這些檔案。",
+                    FileTransferEndReason.Cancelled => $"已取消傳輸(已完成 {e.EntryCount} 個檔案)。",
+                    FileTransferEndReason.CancelledByRemote => $"對方取消了傳輸(已完成 {e.EntryCount} 個檔案)。",
+                    FileTransferEndReason.ConnectionClosed => $"連線已中斷,傳輸已中止(已完成 {e.EntryCount} 個檔案)。",
+                    _ => $"傳輸失敗(已完成 {e.EntryCount} 個檔案)。",
+                }
+                : e.Reason switch
+                {
+                    FileTransferEndReason.Completed when e.Direction == FileTransferDirection.Receiving =>
+                        $"已收到資料夾「{e.FolderName}」(共 {e.EntryCount} 個檔案),已儲存到 {_fileTransferSettings.DownloadFolder}。",
+                    FileTransferEndReason.Completed => $"資料夾「{e.FolderName}」傳送完成(共 {e.EntryCount} 個檔案)。",
+                    FileTransferEndReason.Rejected => $"對方拒絕接收資料夾「{e.FolderName}」。",
+                    FileTransferEndReason.Cancelled => $"已取消資料夾「{e.FolderName}」的傳輸(已完成 {e.EntryCount} 個檔案)。",
+                    FileTransferEndReason.CancelledByRemote => $"對方取消了資料夾「{e.FolderName}」的傳輸(已完成 {e.EntryCount} 個檔案)。",
+                    FileTransferEndReason.ConnectionClosed => $"連線已中斷,資料夾「{e.FolderName}」的傳輸已中止(已完成 {e.EntryCount} 個檔案)。",
+                    _ => $"資料夾「{e.FolderName}」傳輸失敗(已完成 {e.EntryCount} 個檔案)。",
+                };
 
             MainSnackbar.MessageQueue?.Enqueue(message);
             AppendLog(message);

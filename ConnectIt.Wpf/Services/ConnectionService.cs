@@ -40,12 +40,13 @@ public sealed class ConnectionService : IDisposable
     private readonly SemaphoreSlim _writeLock = new(1, 1);
 
     private ActiveTransfer? _activeTransfer;
+    private FolderSession? _activeFolderSession;
 
     public int Port { get; private set; }
 
     public bool IsConnected => _activeClient != null;
 
-    public bool IsFileTransferActive => _activeTransfer != null;
+    public bool IsFileTransferActive => _activeTransfer != null || _activeFolderSession != null;
 
     /// <summary>有裝置送出連線請求,需要使用者確認。</summary>
     public event EventHandler<ConnectionRequestedEventArgs>? ConnectionRequested;
@@ -61,11 +62,17 @@ public sealed class ConnectionService : IDisposable
     /// <summary>對方想要傳送檔案給我們,需要使用者確認。</summary>
     public event EventHandler<FileOfferedEventArgs>? FileOffered;
 
+    /// <summary>對方想要傳送整個資料夾給我們,需要使用者確認。</summary>
+    public event EventHandler<FolderOfferedEventArgs>? FolderOffered;
+
     /// <summary>檔案傳輸進度更新(傳送中或接收中皆會觸發)。</summary>
     public event EventHandler<FileTransferProgressEventArgs>? FileTransferProgress;
 
     /// <summary>檔案傳輸結束,不論成功、被拒絕、被取消或失敗。</summary>
     public event EventHandler<FileTransferEndedEventArgs>? FileTransferEnded;
+
+    /// <summary>資料夾傳輸結束,不論成功、被拒絕、被取消或失敗。</summary>
+    public event EventHandler<FolderTransferEndedEventArgs>? FolderTransferEnded;
 
     /// <summary>開始監聽,回傳實際使用的連接埠(0 代表由系統挑選)。</summary>
     public int StartListening(int preferredPort = 0)
@@ -304,9 +311,10 @@ public sealed class ConnectionService : IDisposable
             }
         }
 
-        // 不論是對方斷線、本機主動斷線還是發生例外,只要還有進行中的檔案傳輸就必須清乾淨
+        // 不論是對方斷線、本機主動斷線還是發生例外,只要還有進行中的檔案/資料夾傳輸就必須清乾淨
         // (關閉/刪除尚未寫完的接收檔案),避免留下殘破的檔案或卡住的狀態。
         AbortActiveTransfer(FileTransferEndReason.ConnectionClosed);
+        AbortActiveFolderSession(FileTransferEndReason.ConnectionClosed);
 
         if (remoteClosed)
         {
@@ -444,7 +452,7 @@ public sealed class ConnectionService : IDisposable
             return;
         }
 
-        if (_activeTransfer != null)
+        if (_activeTransfer != null || _activeFolderSession != null)
         {
             StatusChanged?.Invoke(this, "目前已有檔案傳輸正在進行,請稍後再試。");
             return;
@@ -475,6 +483,148 @@ public sealed class ConnectionService : IDisposable
             TransferId = transfer.TransferId,
             FileName = transfer.FileName,
             Size = transfer.TotalBytes,
+        }).ConfigureAwait(false);
+    }
+
+    /// <summary>
+    /// 傳送整個資料夾(遞迴包含所有子目錄與檔案)。流程跟單一檔案類似:
+    /// 先送出 folder-offer 讓對方決定是否接受整個資料夾,對方一旦接受,底下每個檔案
+    /// 會依序沿用既有的 file-offer/file-accept/Chunk/file-complete 狀態機自動傳送,
+    /// 不會再逐一詢問使用者。
+    /// </summary>
+    public async Task SendFolderAsync(string folderPath)
+    {
+        if (!IsConnected)
+        {
+            StatusChanged?.Invoke(this, "尚未連線,無法傳送資料夾。");
+            return;
+        }
+
+        if (_activeTransfer != null || _activeFolderSession != null)
+        {
+            StatusChanged?.Invoke(this, "目前已有檔案傳輸正在進行,請稍後再試。");
+            return;
+        }
+
+        var info = new DirectoryInfo(folderPath);
+        if (!info.Exists)
+        {
+            StatusChanged?.Invoke(this, $"找不到資料夾:{folderPath}");
+            return;
+        }
+
+        List<(string FullPath, string RelativePath, long Size)> files;
+        try
+        {
+            files = Directory.EnumerateFiles(info.FullName, "*", SearchOption.AllDirectories)
+                .Select(fullPath => (
+                    FullPath: fullPath,
+                    RelativePath: Path.GetRelativePath(info.FullName, fullPath).Replace('\\', '/'),
+                    Size: new FileInfo(fullPath).Length))
+                .ToList();
+        }
+        catch (Exception ex)
+        {
+            StatusChanged?.Invoke(this, $"讀取資料夾內容失敗:{ex.Message}");
+            return;
+        }
+
+        if (files.Count == 0)
+        {
+            StatusChanged?.Invoke(this, "資料夾是空的,沒有可以傳送的檔案。");
+            return;
+        }
+
+        var session = new FolderSession
+        {
+            FolderTransferId = Guid.NewGuid().ToString("N"),
+            Direction = FileTransferDirection.Sending,
+            FolderName = info.Name,
+            TotalBytes = files.Sum(f => f.Size),
+            TotalEntries = files.Count,
+            PendingFiles = new Queue<(string, string, long)>(files),
+            IsBatch = false,
+        };
+        _activeFolderSession = session;
+
+        StatusChanged?.Invoke(this, $"已送出資料夾「{session.FolderName}」({session.TotalEntries} 個檔案)的傳送請求,等待對方確認...");
+
+        await WriteControlAsync(new FileControlMessage
+        {
+            Type = "folder-offer",
+            TransferId = session.FolderTransferId,
+            FileName = session.FolderName,
+            Size = session.TotalBytes,
+            TotalEntries = session.TotalEntries,
+        }).ConfigureAwait(false);
+    }
+
+    /// <summary>
+    /// 傳送多個各自獨立的檔案(使用者一次選取或拖曳多個檔案)。跟 <see cref="SendFolderAsync"/>
+    /// 共用同一套資料夾層級的狀態機,差別只在於接收端不會另外建立一層子資料夾,
+    /// 每個檔案會直接落在使用者設定的下載資料夾裡(檔名相同時一樣會依序改用「(1)」、「(2)」...)。
+    /// 只有一個檔案時,直接走 <see cref="SendFileAsync"/> 原本的單檔流程。
+    /// </summary>
+    public async Task SendFilesAsync(IReadOnlyList<string> filePaths)
+    {
+        if (filePaths.Count == 1)
+        {
+            await SendFileAsync(filePaths[0]).ConfigureAwait(false);
+            return;
+        }
+
+        if (!IsConnected)
+        {
+            StatusChanged?.Invoke(this, "尚未連線,無法傳送檔案。");
+            return;
+        }
+
+        if (_activeTransfer != null || _activeFolderSession != null)
+        {
+            StatusChanged?.Invoke(this, "目前已有檔案傳輸正在進行,請稍後再試。");
+            return;
+        }
+
+        if (filePaths.Count == 0)
+        {
+            return;
+        }
+
+        var files = new List<(string FullPath, string RelativePath, long Size)>();
+        foreach (var filePath in filePaths)
+        {
+            var info = new FileInfo(filePath);
+            if (!info.Exists)
+            {
+                StatusChanged?.Invoke(this, $"找不到檔案:{filePath}");
+                return;
+            }
+
+            files.Add((info.FullName, info.Name, info.Length));
+        }
+
+        var session = new FolderSession
+        {
+            FolderTransferId = Guid.NewGuid().ToString("N"),
+            Direction = FileTransferDirection.Sending,
+            FolderName = $"{files.Count} 個檔案",
+            TotalBytes = files.Sum(f => f.Size),
+            TotalEntries = files.Count,
+            PendingFiles = new Queue<(string, string, long)>(files),
+            IsBatch = true,
+        };
+        _activeFolderSession = session;
+
+        StatusChanged?.Invoke(this, $"已送出 {session.TotalEntries} 個檔案的傳送請求,等待對方確認...");
+
+        await WriteControlAsync(new FileControlMessage
+        {
+            Type = "folder-offer",
+            TransferId = session.FolderTransferId,
+            FileName = session.FolderName,
+            Size = session.TotalBytes,
+            TotalEntries = session.TotalEntries,
+            IsBatch = true,
         }).ConfigureAwait(false);
     }
 
@@ -526,9 +676,96 @@ public sealed class ConnectionService : IDisposable
         _ = WriteControlAsync(new FileControlMessage { Type = "file-accept", TransferId = transferId });
     }
 
-    /// <summary>取消目前進行中的檔案傳輸(不論是傳送中、接收中,還是還在等待對方回應提議階段)。</summary>
+    /// <summary>接收到 <see cref="FolderOffered"/> 之後,使用者確認是否接受整個資料夾時呼叫。</summary>
+    public void RespondToFolderOffer(string folderTransferId, bool accept, string downloadFolder)
+    {
+        var session = _activeFolderSession;
+        if (session is not { Direction: FileTransferDirection.Receiving } || session.FolderTransferId != folderTransferId)
+        {
+            return;
+        }
+
+        if (!accept)
+        {
+            _activeFolderSession = null;
+            _ = WriteControlAsync(new FileControlMessage { Type = "folder-reject", TransferId = folderTransferId });
+            FolderTransferEnded?.Invoke(this, new FolderTransferEndedEventArgs
+            {
+                TransferId = folderTransferId,
+                Direction = FileTransferDirection.Receiving,
+                Reason = FileTransferEndReason.Rejected,
+                FolderName = session.FolderName,
+                EntryCount = 0,
+                IsBatch = session.IsBatch,
+            });
+            return;
+        }
+
+        try
+        {
+            Directory.CreateDirectory(downloadFolder);
+            if (session.IsBatch)
+            {
+                // 多個各自獨立的檔案:不另外建立一層子資料夾,直接落在下載資料夾裡。
+                session.RootDestinationFolder = downloadFolder;
+            }
+            else
+            {
+                session.RootDestinationFolder = GetUniqueDestinationDirectory(downloadFolder, session.FolderName);
+                Directory.CreateDirectory(session.RootDestinationFolder);
+            }
+        }
+        catch (Exception ex)
+        {
+            _activeFolderSession = null;
+            _ = WriteControlAsync(new FileControlMessage { Type = "folder-reject", TransferId = folderTransferId });
+            StatusChanged?.Invoke(this, $"無法建立資料夾:{ex.Message}");
+            FolderTransferEnded?.Invoke(this, new FolderTransferEndedEventArgs
+            {
+                TransferId = folderTransferId,
+                Direction = FileTransferDirection.Receiving,
+                Reason = FileTransferEndReason.Failed,
+                FolderName = session.FolderName,
+                EntryCount = 0,
+                IsBatch = session.IsBatch,
+            });
+            return;
+        }
+
+        _ = WriteControlAsync(new FileControlMessage { Type = "folder-accept", TransferId = folderTransferId });
+    }
+
+    /// <summary>
+    /// 取消目前進行中的傳輸(不論是傳送中、接收中,還是還在等待對方回應提議階段)。
+    /// 若目前是資料夾傳輸,會連同整個資料夾一起取消,而不是只取消當下這一個檔案。
+    /// </summary>
     public void CancelFileTransfer()
     {
+        var folderSession = _activeFolderSession;
+        if (folderSession != null)
+        {
+            _activeFolderSession = null;
+
+            var currentEntry = _activeTransfer;
+            if (currentEntry is { FolderTransferId: not null })
+            {
+                _activeTransfer = null;
+                CleanUpTransferResources(currentEntry);
+            }
+
+            _ = WriteControlAsync(new FileControlMessage { Type = "folder-cancel", TransferId = folderSession.FolderTransferId });
+            FolderTransferEnded?.Invoke(this, new FolderTransferEndedEventArgs
+            {
+                TransferId = folderSession.FolderTransferId,
+                Direction = folderSession.Direction,
+                Reason = FileTransferEndReason.Cancelled,
+                FolderName = folderSession.FolderName,
+                EntryCount = folderSession.CompletedEntries,
+                IsBatch = folderSession.IsBatch,
+            });
+            return;
+        }
+
         var transfer = _activeTransfer;
         if (transfer == null)
         {
@@ -582,12 +819,33 @@ public sealed class ConnectionService : IDisposable
             case "file-complete":
                 HandleFileCompleteAck(message);
                 break;
+            case "folder-offer":
+                HandleFolderOffer(message);
+                break;
+            case "folder-accept":
+                HandleFolderAccept(message);
+                break;
+            case "folder-reject":
+                HandleFolderReject(message);
+                break;
+            case "folder-cancel":
+                HandleFolderCancel(message);
+                break;
+            case "folder-complete":
+                HandleFolderComplete(message);
+                break;
         }
     }
 
     private void HandleFileOffer(FileControlMessage message)
     {
-        if (_activeTransfer != null || string.IsNullOrWhiteSpace(message.FileName) || message.Size is not (>= 0))
+        if (message.FolderTransferId != null)
+        {
+            HandleFolderFileOffer(message);
+            return;
+        }
+
+        if (_activeTransfer != null || _activeFolderSession != null || string.IsNullOrWhiteSpace(message.FileName) || message.Size is not (>= 0))
         {
             _ = WriteControlAsync(new FileControlMessage { Type = "file-reject", TransferId = message.TransferId });
             return;
@@ -607,6 +865,226 @@ public sealed class ConnectionService : IDisposable
             TransferId = transfer.TransferId,
             FileName = transfer.FileName,
             FileSize = transfer.TotalBytes,
+        });
+    }
+
+    private void HandleFolderOffer(FileControlMessage message)
+    {
+        if (_activeTransfer != null || _activeFolderSession != null
+            || string.IsNullOrWhiteSpace(message.FileName) || message.Size is not (>= 0) || message.TotalEntries is not (> 0))
+        {
+            _ = WriteControlAsync(new FileControlMessage { Type = "folder-reject", TransferId = message.TransferId });
+            return;
+        }
+
+        var isBatch = message.IsBatch == true;
+
+        var session = new FolderSession
+        {
+            FolderTransferId = message.TransferId!,
+            Direction = FileTransferDirection.Receiving,
+            // 批次傳送的「資料夾名稱」只是顯示用的摘要文字(例如「3 個檔案」),不會被當成檔案系統路徑,
+            // 所以不需要、也不應該套用只適用於真實檔名的 SanitizeFileName。
+            FolderName = isBatch ? message.FileName! : SanitizeFileName(message.FileName),
+            TotalBytes = message.Size!.Value,
+            TotalEntries = message.TotalEntries!.Value,
+            IsBatch = isBatch,
+        };
+        _activeFolderSession = session;
+
+        FolderOffered?.Invoke(this, new FolderOfferedEventArgs
+        {
+            TransferId = session.FolderTransferId,
+            FolderName = session.FolderName,
+            TotalSize = session.TotalBytes,
+            TotalEntries = session.TotalEntries,
+            IsBatch = session.IsBatch,
+        });
+    }
+
+    /// <summary>
+    /// 資料夾傳輸裡,某一個檔案的 file-offer:因為使用者已經同意過整個資料夾,
+    /// 這裡不再另外詢問,而是直接依 <see cref="FileControlMessage.RelativePath"/> 在
+    /// 資料夾根目錄底下建立對應的子目錄與檔案,然後自動回 file-accept。
+    /// </summary>
+    private void HandleFolderFileOffer(FileControlMessage message)
+    {
+        var session = _activeFolderSession;
+        if (session is not { Direction: FileTransferDirection.Receiving, RootDestinationFolder: not null }
+            || session.FolderTransferId != message.FolderTransferId
+            || _activeTransfer != null
+            || string.IsNullOrWhiteSpace(message.FileName) || message.Size is not (>= 0))
+        {
+            _ = WriteControlAsync(new FileControlMessage { Type = "file-reject", TransferId = message.TransferId });
+            return;
+        }
+
+        var relativePath = SanitizeRelativePath(message.RelativePath, message.FileName);
+        var destinationPath = Path.Combine(session.RootDestinationFolder, relativePath);
+
+        var fullRoot = Path.GetFullPath(session.RootDestinationFolder) + Path.DirectorySeparatorChar;
+        if (!Path.GetFullPath(destinationPath).StartsWith(fullRoot, StringComparison.OrdinalIgnoreCase))
+        {
+            // 正常情況下 SanitizeRelativePath 已經擋掉路徑穿越,這裡是最後一道防線。
+            _ = WriteControlAsync(new FileControlMessage { Type = "file-reject", TransferId = message.TransferId });
+            return;
+        }
+
+        try
+        {
+            var directory = Path.GetDirectoryName(destinationPath)!;
+            Directory.CreateDirectory(directory);
+            destinationPath = GetUniqueDestinationPath(directory, Path.GetFileName(destinationPath));
+
+            var transfer = new ActiveTransfer
+            {
+                TransferId = message.TransferId!,
+                Direction = FileTransferDirection.Receiving,
+                FileName = Path.GetFileName(destinationPath),
+                TotalBytes = message.Size!.Value,
+                FolderTransferId = session.FolderTransferId,
+                EntryIndex = message.EntryIndex,
+                FileStream = new FileStream(destinationPath, FileMode.CreateNew, FileAccess.Write),
+                SavedFilePath = destinationPath,
+            };
+            _activeTransfer = transfer;
+        }
+        catch (Exception ex)
+        {
+            StatusChanged?.Invoke(this, $"無法建立檔案:{ex.Message}");
+            _ = WriteControlAsync(new FileControlMessage { Type = "folder-cancel", TransferId = session.FolderTransferId });
+            AbortActiveFolderSession(FileTransferEndReason.Failed);
+            return;
+        }
+
+        _ = WriteControlAsync(new FileControlMessage { Type = "file-accept", TransferId = message.TransferId });
+    }
+
+    private void HandleFolderAccept(FileControlMessage message)
+    {
+        var session = _activeFolderSession;
+        if (session is not { Direction: FileTransferDirection.Sending } || session.FolderTransferId != message.TransferId)
+        {
+            return;
+        }
+
+        SendNextFolderFileOrComplete(session);
+    }
+
+    private void HandleFolderReject(FileControlMessage message)
+    {
+        var session = _activeFolderSession;
+        if (session == null || session.FolderTransferId != message.TransferId)
+        {
+            return;
+        }
+
+        _activeFolderSession = null;
+        FolderTransferEnded?.Invoke(this, new FolderTransferEndedEventArgs
+        {
+            TransferId = session.FolderTransferId,
+            Direction = session.Direction,
+            Reason = FileTransferEndReason.Rejected,
+            FolderName = session.FolderName,
+            EntryCount = 0,
+            IsBatch = session.IsBatch,
+        });
+    }
+
+    private void HandleFolderCancel(FileControlMessage message)
+    {
+        var session = _activeFolderSession;
+        if (session == null || session.FolderTransferId != message.TransferId)
+        {
+            return;
+        }
+
+        _activeFolderSession = null;
+
+        var currentEntry = _activeTransfer;
+        if (currentEntry is { FolderTransferId: not null } && currentEntry.FolderTransferId == session.FolderTransferId)
+        {
+            _activeTransfer = null;
+            CleanUpTransferResources(currentEntry);
+        }
+
+        FolderTransferEnded?.Invoke(this, new FolderTransferEndedEventArgs
+        {
+            TransferId = session.FolderTransferId,
+            Direction = session.Direction,
+            Reason = FileTransferEndReason.CancelledByRemote,
+            FolderName = session.FolderName,
+            EntryCount = session.CompletedEntries,
+            IsBatch = session.IsBatch,
+        });
+    }
+
+    /// <summary>接收端收到 folder-complete:代表傳送端已經把所有檔案都送完,且每個都收到接收端的 file-complete 確認了。</summary>
+    private void HandleFolderComplete(FileControlMessage message)
+    {
+        var session = _activeFolderSession;
+        if (session is not { Direction: FileTransferDirection.Receiving } || session.FolderTransferId != message.TransferId)
+        {
+            return;
+        }
+
+        _activeFolderSession = null;
+        FolderTransferEnded?.Invoke(this, new FolderTransferEndedEventArgs
+        {
+            TransferId = session.FolderTransferId,
+            Direction = FileTransferDirection.Receiving,
+            Reason = FileTransferEndReason.Completed,
+            FolderName = session.FolderName,
+            EntryCount = session.TotalEntries,
+            IsBatch = session.IsBatch,
+            SavedFolderPath = session.RootDestinationFolder,
+        });
+    }
+
+    /// <summary>傳送端:把資料夾佇列裡的下一個檔案送出 file-offer;如果已經沒有檔案了,結束整個資料夾傳輸。</summary>
+    private void SendNextFolderFileOrComplete(FolderSession session)
+    {
+        if (session.PendingFiles == null || session.PendingFiles.Count == 0)
+        {
+            _activeFolderSession = null;
+            _ = WriteControlAsync(new FileControlMessage { Type = "folder-complete", TransferId = session.FolderTransferId });
+            FolderTransferEnded?.Invoke(this, new FolderTransferEndedEventArgs
+            {
+                TransferId = session.FolderTransferId,
+                Direction = FileTransferDirection.Sending,
+                Reason = FileTransferEndReason.Completed,
+                FolderName = session.FolderName,
+                EntryCount = session.TotalEntries,
+                IsBatch = session.IsBatch,
+            });
+            return;
+        }
+
+        var (fullPath, relativePath, size) = session.PendingFiles.Dequeue();
+        var entryIndex = session.CompletedEntries + 1;
+
+        var transfer = new ActiveTransfer
+        {
+            TransferId = Guid.NewGuid().ToString("N"),
+            Direction = FileTransferDirection.Sending,
+            FileName = Path.GetFileName(fullPath),
+            TotalBytes = size,
+            FilePath = fullPath,
+            FolderTransferId = session.FolderTransferId,
+            EntryIndex = entryIndex,
+        };
+        _activeTransfer = transfer;
+
+        _ = WriteControlAsync(new FileControlMessage
+        {
+            Type = "file-offer",
+            TransferId = transfer.TransferId,
+            FileName = transfer.FileName,
+            Size = transfer.TotalBytes,
+            FolderTransferId = session.FolderTransferId,
+            RelativePath = relativePath,
+            EntryIndex = entryIndex,
+            TotalEntries = session.TotalEntries,
         });
     }
 
@@ -630,6 +1108,16 @@ public sealed class ConnectionService : IDisposable
         }
 
         _activeTransfer = null;
+
+        if (transfer.FolderTransferId is { } folderTransferId)
+        {
+            // 資料夾裡的其中一個檔案被拒絕是不應該發生的狀況(整個資料夾已經被同意過了),
+            // 保守起見直接把整個資料夾傳輸結束掉,而不是嘗試略過這個檔案繼續傳其他的。
+            _ = WriteControlAsync(new FileControlMessage { Type = "folder-cancel", TransferId = folderTransferId });
+            AbortActiveFolderSession(FileTransferEndReason.Failed);
+            return;
+        }
+
         FileTransferEnded?.Invoke(this, new FileTransferEndedEventArgs
         {
             TransferId = transfer.TransferId,
@@ -650,6 +1138,12 @@ public sealed class ConnectionService : IDisposable
         _activeTransfer = null;
         CleanUpTransferResources(transfer);
 
+        if (transfer.FolderTransferId != null)
+        {
+            AbortActiveFolderSession(FileTransferEndReason.CancelledByRemote);
+            return;
+        }
+
         FileTransferEnded?.Invoke(this, new FileTransferEndedEventArgs
         {
             TransferId = transfer.TransferId,
@@ -668,6 +1162,16 @@ public sealed class ConnectionService : IDisposable
         }
 
         _activeTransfer = null;
+
+        if (transfer.FolderTransferId is { } folderTransferId
+            && _activeFolderSession is { } session && session.FolderTransferId == folderTransferId)
+        {
+            session.CompletedBytes += transfer.TotalBytes;
+            session.CompletedEntries += 1;
+            SendNextFolderFileOrComplete(session);
+            return;
+        }
+
         FileTransferEnded?.Invoke(this, new FileTransferEndedEventArgs
         {
             TransferId = transfer.TransferId,
@@ -703,12 +1207,19 @@ public sealed class ConnectionService : IDisposable
 
         transfer.TransferredBytes += payload.Length;
 
+        var (folderBytes, folderTotal) = GetFolderProgressTotals(transfer);
         FileTransferProgress?.Invoke(this, new FileTransferProgressEventArgs
         {
             TransferId = transfer.TransferId,
             Direction = FileTransferDirection.Receiving,
             BytesTransferred = transfer.TransferredBytes,
             TotalBytes = transfer.TotalBytes,
+            FolderTransferId = transfer.FolderTransferId,
+            FileName = transfer.FolderTransferId != null ? transfer.FileName : null,
+            EntryIndex = transfer.EntryIndex,
+            TotalEntries = _activeFolderSession?.TotalEntries,
+            FolderBytesTransferred = folderBytes,
+            FolderTotalBytes = folderTotal,
         });
 
         if (transfer.TransferredBytes == transfer.TotalBytes)
@@ -716,6 +1227,15 @@ public sealed class ConnectionService : IDisposable
             _activeTransfer = null;
             transfer.FileStream.Dispose();
             _ = WriteControlAsync(new FileControlMessage { Type = "file-complete", TransferId = transfer.TransferId });
+
+            if (transfer.FolderTransferId is { } folderTransferId
+                && _activeFolderSession is { } session && session.FolderTransferId == folderTransferId)
+            {
+                session.CompletedBytes += transfer.TotalBytes;
+                session.CompletedEntries += 1;
+                return; // 資料夾層級的完成事件要等收到傳送端送來的 folder-complete 才觸發。
+            }
+
             FileTransferEnded?.Invoke(this, new FileTransferEndedEventArgs
             {
                 TransferId = transfer.TransferId,
@@ -739,12 +1259,19 @@ public sealed class ConnectionService : IDisposable
                 await WriteFrameAsync(FrameType.Chunk, buffer.AsMemory(0, read), transfer.Cts.Token).ConfigureAwait(false);
                 transfer.TransferredBytes += read;
 
+                var (folderBytes, folderTotal) = GetFolderProgressTotals(transfer);
                 FileTransferProgress?.Invoke(this, new FileTransferProgressEventArgs
                 {
                     TransferId = transfer.TransferId,
                     Direction = FileTransferDirection.Sending,
                     BytesTransferred = transfer.TransferredBytes,
                     TotalBytes = transfer.TotalBytes,
+                    FolderTransferId = transfer.FolderTransferId,
+                    FileName = transfer.FolderTransferId != null ? transfer.FileName : null,
+                    EntryIndex = transfer.EntryIndex,
+                    TotalEntries = _activeFolderSession?.TotalEntries,
+                    FolderBytesTransferred = folderBytes,
+                    FolderTotalBytes = folderTotal,
                 });
             }
 
@@ -771,6 +1298,14 @@ public sealed class ConnectionService : IDisposable
         CleanUpTransferResources(transfer);
 
         StatusChanged?.Invoke(this, reason);
+
+        if (transfer.FolderTransferId is { } folderTransferId)
+        {
+            _ = WriteControlAsync(new FileControlMessage { Type = "folder-cancel", TransferId = folderTransferId });
+            AbortActiveFolderSession(FileTransferEndReason.Failed);
+            return;
+        }
+
         _ = WriteControlAsync(new FileControlMessage { Type = "file-cancel", TransferId = transfer.TransferId });
         FileTransferEnded?.Invoke(this, new FileTransferEndedEventArgs
         {
@@ -793,6 +1328,11 @@ public sealed class ConnectionService : IDisposable
         _activeTransfer = null;
         CleanUpTransferResources(transfer);
 
+        if (transfer.FolderTransferId != null)
+        {
+            return; // 資料夾層級的結束事件由 AbortActiveFolderSession 統一觸發,避免同時跳出兩則訊息。
+        }
+
         FileTransferEnded?.Invoke(this, new FileTransferEndedEventArgs
         {
             TransferId = transfer.TransferId,
@@ -800,6 +1340,40 @@ public sealed class ConnectionService : IDisposable
             Reason = reason,
             FileName = transfer.FileName,
         });
+    }
+
+    /// <summary>連線中斷或發生無法復原的錯誤時,結束整個資料夾傳輸,不嘗試再送出任何控制訊息。</summary>
+    private void AbortActiveFolderSession(FileTransferEndReason reason)
+    {
+        var session = _activeFolderSession;
+        if (session == null)
+        {
+            return;
+        }
+
+        _activeFolderSession = null;
+
+        FolderTransferEnded?.Invoke(this, new FolderTransferEndedEventArgs
+        {
+            TransferId = session.FolderTransferId,
+            Direction = session.Direction,
+            Reason = reason,
+            FolderName = session.FolderName,
+            EntryCount = session.CompletedEntries,
+            IsBatch = session.IsBatch,
+        });
+    }
+
+    /// <summary>算出目前這個檔案在所屬資料夾傳輸裡的累計進度(含之前已完成的檔案),不屬於資料夾傳輸則回傳 null。</summary>
+    private (long? BytesTransferred, long? TotalBytes) GetFolderProgressTotals(ActiveTransfer transfer)
+    {
+        if (transfer.FolderTransferId is not { } folderTransferId
+            || _activeFolderSession is not { } session || session.FolderTransferId != folderTransferId)
+        {
+            return (null, null);
+        }
+
+        return (session.CompletedBytes + transfer.TransferredBytes, session.TotalBytes);
     }
 
     /// <summary>停止背景送出迴圈(若有)、關閉並刪除尚未寫完的接收檔案(若有)。</summary>
@@ -870,6 +1444,54 @@ public sealed class ConnectionService : IDisposable
         }
     }
 
+    /// <summary>如果目的路徑的資料夾已存在(或撞到同名檔案),依序改用「資料夾名稱 (1)」、「資料夾名稱 (2)」...直到找到未使用的名稱。</summary>
+    private static string GetUniqueDestinationDirectory(string parentFolder, string folderName)
+    {
+        var candidate = Path.Combine(parentFolder, folderName);
+        if (!Directory.Exists(candidate) && !File.Exists(candidate))
+        {
+            return candidate;
+        }
+
+        for (var i = 1; ; i++)
+        {
+            candidate = Path.Combine(parentFolder, $"{folderName} ({i})");
+            if (!Directory.Exists(candidate) && !File.Exists(candidate))
+            {
+                return candidate;
+            }
+        }
+    }
+
+    /// <summary>
+    /// 把對方宣告的相對路徑限制在資料夾根目錄底下(移除 "."/".." 這種可能造成路徑穿越的片段),
+    /// 並比照 <see cref="SanitizeFileName"/> 過濾每一段路徑名稱裡的不合法字元。
+    /// </summary>
+    private static string SanitizeRelativePath(string? relativePath, string fallbackFileName)
+    {
+        var fileName = SanitizeFileName(fallbackFileName);
+        if (string.IsNullOrWhiteSpace(relativePath))
+        {
+            return fileName;
+        }
+
+        var segments = relativePath
+            .Replace('\\', '/')
+            .Split('/', StringSplitOptions.RemoveEmptyEntries)
+            .Where(segment => segment is not ("." or ".."))
+            .Select(segment => segment.IndexOfAny(Path.GetInvalidFileNameChars()) >= 0 ? "_" : segment)
+            .ToArray();
+
+        if (segments.Length == 0)
+        {
+            return fileName;
+        }
+
+        // 最後一段(檔名)一律以 file-offer 訊息裡另外宣告的 FileName 為準,RelativePath 只用來決定子目錄結構。
+        segments[^1] = fileName;
+        return Path.Combine(segments);
+    }
+
     private sealed class ActiveTransfer
     {
         public required string TransferId { get; init; }
@@ -891,6 +1513,39 @@ public sealed class ConnectionService : IDisposable
         /// <summary>接收端:目的檔案的完整路徑。</summary>
         public string? SavedFilePath { get; set; }
 
+        /// <summary>屬於資料夾傳輸時,所屬的資料夾傳輸 TransferId,否則為 null。</summary>
+        public string? FolderTransferId { get; init; }
+
+        /// <summary>屬於資料夾傳輸時,這個檔案是第幾個(1-based)。</summary>
+        public int? EntryIndex { get; init; }
+
         public CancellationTokenSource Cts { get; } = new();
+    }
+
+    /// <summary>一次資料夾傳輸的整體狀態,底下每個檔案仍沿用 <see cref="ActiveTransfer"/> 逐一傳送。</summary>
+    private sealed class FolderSession
+    {
+        public required string FolderTransferId { get; init; }
+
+        public required FileTransferDirection Direction { get; init; }
+
+        public required string FolderName { get; init; }
+
+        public required long TotalBytes { get; init; }
+
+        public required int TotalEntries { get; init; }
+
+        public long CompletedBytes { get; set; }
+
+        public int CompletedEntries { get; set; }
+
+        /// <summary>傳送端:尚未送出的檔案佇列(完整路徑、相對於資料夾根目錄的路徑、檔案大小)。</summary>
+        public Queue<(string FullPath, string RelativePath, long Size)>? PendingFiles { get; init; }
+
+        /// <summary>接收端:這個資料夾實際落地的根目錄(已處理重名)。</summary>
+        public string? RootDestinationFolder { get; set; }
+
+        /// <summary>true 代表這是多個各自獨立的檔案一起送過來,不是使用者選了一整個資料夾。</summary>
+        public required bool IsBatch { get; init; }
     }
 }
