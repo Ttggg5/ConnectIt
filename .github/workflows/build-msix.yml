@@ -58,7 +58,11 @@ jobs:
           "PFX_PASSWORD=$pfxPassword" >> $env:GITHUB_ENV
 
       - name: Build the Windows Application Packaging Project (MSIX)
-        run: msbuild $env:Wap_Project_Path /p:Configuration=$env:Configuration /p:Platform=$env:Platform /p:UapAppxPackageBuildMode=SideloadOnly /p:AppxBundle=Never /p:AppxPackageDir=$env:Wap_Project_Directory\$env:AppPackages_Directory\ /p:PackageCertificateKeyFile=CiSigning.pfx /p:PackageCertificatePassword=$env:PFX_PASSWORD
+        run: msbuild $env:Wap_Project_Path /p:Configuration=$env:Configuration /p:Platform=$env:Platform /p:UapAppxPackageBuildMode=SideloadOnly /p:AppxBundle=Never /p:GenerateAppxPackageOnBuild=true /p:AppxPackageDir=$env:Wap_Project_Directory\$env:AppPackages_Directory\ /p:PackageCertificateKeyFile=CiSigning.pfx /p:PackageCertificatePassword=$env:PFX_PASSWORD
+
+      - name: List package output (for troubleshooting)
+        if: always()
+        run: Get-ChildItem -Recurse "$env:Wap_Project_Directory\$env:AppPackages_Directory"
 
       - name: Remove signing certificate
         if: always()
