@@ -1,5 +1,4 @@
 <Solution>
   <Project Path="ConnectIt.Tests/ConnectIt.Tests.csproj" />
   <Project Path="ConnectIt.Wpf/ConnectIt.Wpf.csproj" />
-  <Project Path="ConnectIt.Package/ConnectIt.Package.wapproj" />
 </Solution>

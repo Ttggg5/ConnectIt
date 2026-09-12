@@ -10,7 +10,7 @@ jobs:
     runs-on: windows-latest
 
     env:
-      Solution_Path: ConnectIt.slnx
+      Solution_Path: ConnectIt.sln
       Wap_Project_Directory: ConnectIt.Package
       Configuration: Release
       Platform: x64
@@ -29,9 +29,12 @@ jobs:
       - name: Setup MSBuild
         uses: microsoft/setup-msbuild@v2
 
-      # 一定要透過整個 .slnx 建置,不能只對 .wapproj 本身跑 msbuild——直接對
+      # 一定要透過方案檔(.sln)建置,不能只對 .wapproj 本身跑 msbuild——直接對
       # wapproj 建置雖然會顯示 Build succeeded,但打包 MSIX 的步驟會被靜默跳過,
-      # 只透過方案(solution)建置才會正確觸發打包。
+      # 只透過方案建置才會正確觸發打包。這裡刻意用舊式的 ConnectIt.sln,而不是
+      # 專案原本的 ConnectIt.slnx——新的 .slnx 格式目前還無法辨識 .wapproj 這種
+      # 舊式專案類型(會出現 "ProjectType '' not found" 錯誤),所以 wapproj 只能
+      # 放進舊式 .sln 裡,不會動到原本給日常開發用的 ConnectIt.slnx。
       - name: Restore NuGet packages
         run: msbuild $env:Solution_Path /t:Restore /p:Configuration=$env:Configuration /p:Platform=$env:Platform /p:RuntimeIdentifier=win-x64 /p:SelfContained=true
 
