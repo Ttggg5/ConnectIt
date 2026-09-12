@@ -10,7 +10,7 @@ jobs:
     runs-on: windows-latest
 
     env:
-      Wap_Project_Path: ConnectIt.Package\ConnectIt.Package.wapproj
+      Solution_Path: ConnectIt.slnx
       Wap_Project_Directory: ConnectIt.Package
       Configuration: Release
       Platform: x64
@@ -29,8 +29,11 @@ jobs:
       - name: Setup MSBuild
         uses: microsoft/setup-msbuild@v2
 
+      # 一定要透過整個 .slnx 建置,不能只對 .wapproj 本身跑 msbuild——直接對
+      # wapproj 建置雖然會顯示 Build succeeded,但打包 MSIX 的步驟會被靜默跳過,
+      # 只透過方案(solution)建置才會正確觸發打包。
       - name: Restore NuGet packages
-        run: msbuild $env:Wap_Project_Path /t:Restore /p:Configuration=$env:Configuration /p:Platform=$env:Platform /p:RuntimeIdentifier=win-x64 /p:SelfContained=true
+        run: msbuild $env:Solution_Path /t:Restore /p:Configuration=$env:Configuration /p:Platform=$env:Platform /p:RuntimeIdentifier=win-x64 /p:SelfContained=true
 
       # 產生測試用自簽憑證,Subject 必須與 Package.appxmanifest 內的 Identity.Publisher 一致
       # (CN=ConnectIt),否則簽署會失敗。此憑證每次執行都會重新產生,安裝端第一次安裝
@@ -55,10 +58,12 @@ jobs:
           Export-PfxCertificate -Cert $cert -FilePath "$env:Wap_Project_Directory\CiSigning.pfx" -Password $securePassword | Out-Null
           Export-Certificate -Cert $cert -FilePath "$env:Wap_Project_Directory\$env:AppPackages_Directory\ConnectIt_CI.cer" | Out-Null
 
+          # 遮蓋 log 中的密碼,避免明文外洩
+          Write-Output "::add-mask::$pfxPassword"
           "PFX_PASSWORD=$pfxPassword" >> $env:GITHUB_ENV
 
       - name: Build the Windows Application Packaging Project (MSIX)
-        run: msbuild $env:Wap_Project_Path /p:Configuration=$env:Configuration /p:Platform=$env:Platform /p:UapAppxPackageBuildMode=SideloadOnly /p:AppxBundle=Never /p:GenerateAppxPackageOnBuild=true /p:AppxPackageDir=$env:Wap_Project_Directory\$env:AppPackages_Directory\ /p:PackageCertificateKeyFile=CiSigning.pfx /p:PackageCertificatePassword=$env:PFX_PASSWORD
+        run: msbuild $env:Solution_Path /p:Configuration=$env:Configuration /p:Platform=$env:Platform /p:UapAppxPackageBuildMode=SideloadOnly /p:AppxBundle=Never /p:GenerateAppxPackageOnBuild=true /p:AppxPackageDir=$env:Wap_Project_Directory\$env:AppPackages_Directory\ /p:PackageCertificateKeyFile=CiSigning.pfx /p:PackageCertificatePassword=$env:PFX_PASSWORD
 
       - name: List package output (for troubleshooting)
         if: always()
