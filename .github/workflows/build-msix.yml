@@ -1,0 +1,71 @@
+name: Build MSIX
+
+on:
+  push:
+    branches: ["**"]
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: windows-latest
+
+    env:
+      Wap_Project_Path: ConnectIt.Package\ConnectIt.Package.wapproj
+      Wap_Project_Directory: ConnectIt.Package
+      Configuration: Release
+      Platform: x64
+      AppPackages_Directory: AppPackages
+      Cert_Subject: CN=ConnectIt
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup .NET SDK
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: "10.0.x"
+
+      - name: Setup MSBuild
+        uses: microsoft/setup-msbuild@v2
+
+      - name: Restore NuGet packages
+        run: msbuild $env:Wap_Project_Path /t:Restore /p:Configuration=$env:Configuration /p:Platform=$env:Platform /p:RuntimeIdentifier=win-x64 /p:SelfContained=true
+
+      # 產生測試用自簽憑證,Subject 必須與 Package.appxmanifest 內的 Identity.Publisher 一致
+      # (CN=ConnectIt),否則簽署會失敗。此憑證每次執行都會重新產生,安裝端第一次安裝
+      # 這個 MSIX 前,需要先把隨附匯出的 .cer 檔匯入「受信任的人」憑證存放區,
+      # 否則 Windows 會拒絕安裝未受信任的套件。
+      - name: Create self-signed signing certificate
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force -Path $env:Wap_Project_Directory\$env:AppPackages_Directory | Out-Null
+
+          $cert = New-SelfSignedCertificate `
+            -Type Custom `
+            -Subject $env:Cert_Subject `
+            -KeyUsage DigitalSignature `
+            -FriendlyName "ConnectIt CI Signing Certificate" `
+            -CertStoreLocation "Cert:\CurrentUser\My" `
+            -TextExtension @("2.5.29.37={text}1.3.6.1.5.5.7.3.3", "2.5.29.19={text}Subject Type:End Entity")
+
+          $pfxPassword = [System.Guid]::NewGuid().ToString("N")
+          $securePassword = ConvertTo-SecureString -String $pfxPassword -Force -AsPlainText
+
+          Export-PfxCertificate -Cert $cert -FilePath "$env:Wap_Project_Directory\CiSigning.pfx" -Password $securePassword | Out-Null
+          Export-Certificate -Cert $cert -FilePath "$env:Wap_Project_Directory\$env:AppPackages_Directory\ConnectIt_CI.cer" | Out-Null
+
+          "PFX_PASSWORD=$pfxPassword" >> $env:GITHUB_ENV
+
+      - name: Build the Windows Application Packaging Project (MSIX)
+        run: msbuild $env:Wap_Project_Path /p:Configuration=$env:Configuration /p:Platform=$env:Platform /p:UapAppxPackageBuildMode=SideloadOnly /p:AppxBundle=Never /p:AppxPackageDir=$env:Wap_Project_Directory\$env:AppPackages_Directory\ /p:PackageCertificateKeyFile=CiSigning.pfx /p:PackageCertificatePassword=$env:PFX_PASSWORD
+
+      - name: Remove signing certificate
+        if: always()
+        run: Remove-Item -Path "$env:Wap_Project_Directory\CiSigning.pfx" -ErrorAction SilentlyContinue
+
+      - name: Upload MSIX artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ConnectIt-msix
+          path: ${{ env.Wap_Project_Directory }}\${{ env.AppPackages_Directory }}
