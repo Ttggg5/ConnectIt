@@ -1,6 +1,7 @@
 using System.Configuration;
 using System.Data;
 using System.Drawing;
+using System.Threading;
 using System.Windows;
 using System.Windows.Forms;
 using Application = System.Windows.Application;
@@ -12,15 +13,61 @@ namespace ConnectIt.Wpf;
 /// </summary>
 public partial class App : Application
 {
+    // 固定的識別字串,確保每台機器上不管開幾次 exe,Mutex/EventWaitHandle 都指向同一個名字。
+    private const string SingleInstanceMutexName = "ConnectIt-SingleInstance-9F2E6B7E-8C1A-4E1D-9D3B-2D6E1F9A7C44";
+    private const string ActivateEventName = "ConnectIt-Activate-9F2E6B7E-8C1A-4E1D-9D3B-2D6E1F9A7C44";
+
     private NotifyIcon? _notifyIcon;
+    private Mutex? _singleInstanceMutex;
+    private EventWaitHandle? _activateEvent;
 
     // 讓 MainWindow 判斷:目前是使用者按了系統匣的「結束」,還是只是想關閉視窗(此時要改成隱藏到系統匣)。
     public bool IsExiting { get; private set; }
 
     protected override void OnStartup(StartupEventArgs e)
     {
+        // 同一台裝置只允許一個執行中的 ConnectIt——每個實例都會各自監聽一個 TCP 連接埠,
+        // 開多個實例只會造成裝置探索/連線對到不確定是哪一個埠,而不是真的能同時用。
+        // 用具名 Mutex 判斷是不是第一個實例;不是的話就叫醒既有的那個(顯示主視窗)然後直接結束自己。
+        _singleInstanceMutex = new Mutex(true, SingleInstanceMutexName, out var createdNew);
+        if (!createdNew)
+        {
+            try
+            {
+                using var existingActivateEvent = EventWaitHandle.OpenExisting(ActivateEventName);
+                existingActivateEvent.Set();
+            }
+            catch (WaitHandleCannotBeOpenedException)
+            {
+                // 理論上不該發生(Mutex 都已經有人持有了),忽略即可。
+            }
+
+            Shutdown();
+            return;
+        }
+
+        _activateEvent = new EventWaitHandle(false, EventResetMode.AutoReset, ActivateEventName);
+        StartActivateListener();
+
         base.OnStartup(e);
         InitializeTrayIcon();
+    }
+
+    /// <summary>背景執行緒等待其他(被擋下的)實例送來的訊號,收到就在 UI 執行緒把主視窗叫出來。</summary>
+    private void StartActivateListener()
+    {
+        var activateEvent = _activateEvent!;
+        var thread = new Thread(() =>
+        {
+            while (activateEvent.WaitOne())
+            {
+                Dispatcher.Invoke(ShowMainWindow);
+            }
+        })
+        {
+            IsBackground = true,
+        };
+        thread.Start();
     }
 
     private void InitializeTrayIcon()
@@ -94,6 +141,16 @@ public partial class App : Application
     {
         _notifyIcon?.Dispose();
         _notifyIcon = null;
+
+        _activateEvent?.Dispose();
+        _activateEvent = null;
+
+        // 沒拿到 Mutex 的那個「第二實例」路徑不會走到這裡(它在 OnStartup 就直接 Shutdown 了),
+        // 所以這裡一定是真正持有 Mutex 的那個實例,可以安全釋放。
+        _singleInstanceMutex?.ReleaseMutex();
+        _singleInstanceMutex?.Dispose();
+        _singleInstanceMutex = null;
+
         base.OnExit(e);
     }
 }
