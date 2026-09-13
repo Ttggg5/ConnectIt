@@ -127,6 +127,7 @@ public sealed class ConnectionService : IDisposable
     {
         var remoteAddress = ((IPEndPoint)client.Client.RemoteEndPoint!).Address;
         StatusChanged?.Invoke(this, $"收到來自 {remoteAddress} 的連線嘗試。");
+        client.NoDelay = true;
 
         try
         {
@@ -225,6 +226,7 @@ public sealed class ConnectionService : IDisposable
                 }
             }
 
+            client.NoDelay = true;
             var stream = client.GetStream();
             using var reader = new StreamReader(stream, Encoding.UTF8, leaveOpen: true);
             var writer = new StreamWriter(stream, Encoding.UTF8) { AutoFlush = true };
@@ -381,15 +383,17 @@ public sealed class ConnectionService : IDisposable
             return;
         }
 
-        var header = new byte[FrameLengthPrefixSize];
-        BinaryPrimitives.WriteInt32BigEndian(header, payload.Length + 1);
+        // 把 header/type/payload 合併成單一緩衝區一次寫入,避免拆成多個小封包各自等待
+        // ACK(TCP Nagle 演算法 + 對方的 delayed ACK 交互作用下,每個小封包都可能多花數十毫秒)。
+        var frame = new byte[FrameLengthPrefixSize + 1 + payload.Length];
+        BinaryPrimitives.WriteInt32BigEndian(frame, payload.Length + 1);
+        frame[FrameLengthPrefixSize] = type;
+        payload.CopyTo(frame.AsMemory(FrameLengthPrefixSize + 1));
 
         await _writeLock.WaitAsync(token).ConfigureAwait(false);
         try
         {
-            await stream.WriteAsync(header, token).ConfigureAwait(false);
-            await stream.WriteAsync(new[] { type }, token).ConfigureAwait(false);
-            await stream.WriteAsync(payload, token).ConfigureAwait(false);
+            await stream.WriteAsync(frame, token).ConfigureAwait(false);
         }
         catch
         {
