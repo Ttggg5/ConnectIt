@@ -22,7 +22,7 @@
             </Grid.ColumnDefinitions>
 
             <!-- ===================== 導覽列 ===================== -->
-            <materialDesign:ColorZone Grid.Column="0" Mode="PrimaryMid">
+            <materialDesign:ColorZone x:Name="NavColorZone" Grid.Column="0" Mode="PrimaryMid">
                 <StackPanel Width="84">
                     <ListBox x:Name="NavListBox" AutomationProperties.AutomationId="NavListBox"
                              Margin="0,16,0,0" Background="Transparent" BorderThickness="0"
@@ -513,7 +513,7 @@
                     <RowDefinition Height="*"/>
                 </Grid.RowDefinitions>
 
-                <materialDesign:ColorZone Grid.Row="0" Mode="PrimaryMid">
+                <materialDesign:ColorZone x:Name="VideoWebViewHeader" Grid.Row="0" Mode="PrimaryMid">
                     <StackPanel Orientation="Horizontal" Margin="4">
                         <Button AutomationProperties.AutomationId="VideoWebViewBackButton"
                                 Style="{StaticResource MaterialDesignIconButton}"
@@ -524,7 +524,8 @@
                     </StackPanel>
                 </materialDesign:ColorZone>
 
-                <wv2:WebView2 x:Name="VideoWebView" Grid.Row="1"/>
+                <wv2:WebView2 x:Name="VideoWebView" Grid.Row="1"
+                              CoreWebView2InitializationCompleted="VideoWebView_CoreWebView2InitializationCompleted"/>
             </Grid>
 
             <materialDesign:Snackbar x:Name="MainSnackbar"
