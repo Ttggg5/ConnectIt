@@ -69,8 +69,20 @@ public sealed class MdnsDiscoveryService : IDisposable
     // 就一定是全新的 DNS-SD 記錄,不會跟任何殘留的舊記錄混在一起。
     private string _instanceSuffix = Guid.NewGuid().ToString("N")[..4];
 
+    // 上一次真正送出廣播時用的友善名稱,搭配 _selfPort/_selfAddresses 判斷這次 Advertise() 呼叫
+    // 是不是名稱/連接埠/位址其實都沒變——見 Advertise() 裡的說明。
+    private string? _lastAdvertisedFriendlyName;
+
     // 等待位址解析的 host -> (instance, port, 顯示用的友善名稱)
     private readonly ConcurrentDictionary<DomainName, (DomainName Instance, int Port, string? FriendlyName)> _pendingByHost = new();
+
+    // 每個實體名稱最後一次看到的友善名稱(TXT 記錄的 "name" 屬性)。mDNS 的 SRV/TXT/A 記錄
+    // 常常分散在不同的 UDP 封包裡送達(尤其是心跳重送查詢時,對方不一定每次都把 TXT 附在
+    // 同一個回應裡),單次 OnAnswerReceived 收到的封包不保證同時帶有 TXT——如果就這樣直接
+    // 把「這次沒附 TXT」當成「這台裝置沒有友善名稱」,DisplayName 就會在原始的實體名稱
+    // (含隨機短碼,例如 "SM-F9710-f597")跟正確的友善名稱("SM-F9710")之間忽隱忽現地跳動。
+    // 用這份快取記住學到的友善名稱,之後即使某次回應剛好沒附 TXT,也優先沿用先前學到的值。
+    private readonly ConcurrentDictionary<string, string> _knownFriendlyNames = new(StringComparer.OrdinalIgnoreCase);
 
     public event EventHandler<DiscoveredDevice>? DeviceDiscovered;
     public event EventHandler<string>? DeviceRemoved;
@@ -111,6 +123,7 @@ public sealed class MdnsDiscoveryService : IDisposable
         {
             if (lastSeen < cutoff && _lastSeenUtc.TryRemove(instanceName, out _))
             {
+                _knownFriendlyNames.TryRemove(instanceName, out _);
                 DeviceRemoved?.Invoke(this, instanceName);
             }
         }
@@ -136,15 +149,28 @@ public sealed class MdnsDiscoveryService : IDisposable
             throw new InvalidOperationException("請先呼叫 Start()。");
         }
 
+        var friendlyName = MakeSafeInstanceName(deviceName);
+        var addresses = GetRoutableIPv4Addresses();
+
+        // 名稱、連接埠、位址都沒變的話,不需要真的重新廣播一次——重新廣播一定會用新的隨機短碼
+        // (見 _instanceSuffix 的說明)產生全新的實體名稱,對方(尤其是 Android NsdManager)
+        // 不保證會馬上處理到舊名稱的 goodbye 封包(Unadvertise 也只會移除 PTR,不會清掉 SRV/
+        // 位址記錄),短時間內反而會同時看到新舊兩個實體名稱,變成同一台裝置在清單裡出現兩筆。
+        // 「中斷連線後回到搜尋畫面」這種名稱/連接埠其實都沒變的情況,沿用原本的廣播即可。
+        if (_selfProfile != null && friendlyName == _lastAdvertisedFriendlyName && port == _selfPort
+            && addresses.Count == _selfAddresses.Count && addresses.All(_selfAddresses.Contains))
+        {
+            return;
+        }
+
         if (_selfProfile != null)
         {
             _sd.Unadvertise(_selfProfile);
         }
 
         _instanceSuffix = Guid.NewGuid().ToString("N")[..4];
-        var friendlyName = MakeSafeInstanceName(deviceName);
+        _lastAdvertisedFriendlyName = friendlyName;
         var instanceName = $"{friendlyName}-{_instanceSuffix}";
-        var addresses = GetRoutableIPv4Addresses();
         _selfProfile = addresses.Count > 0
             ? new ServiceProfile(instanceName, ServiceType, (ushort)port, addresses)
             : new ServiceProfile(instanceName, ServiceType, (ushort)port);
@@ -216,6 +242,7 @@ public sealed class MdnsDiscoveryService : IDisposable
         _selfProfile = null;
         _selfAddresses.Clear();
         _selfPort = -1;
+        _lastAdvertisedFriendlyName = null;
     }
 
     private static string MakeSafeInstanceName(string name)
@@ -254,8 +281,10 @@ public sealed class MdnsDiscoveryService : IDisposable
 
     private void OnServiceInstanceShutdown(object? sender, ServiceInstanceShutdownEventArgs e)
     {
-        _lastSeenUtc.TryRemove(e.ServiceInstanceName.ToString(), out _);
-        DeviceRemoved?.Invoke(this, e.ServiceInstanceName.ToString());
+        var instanceKey = e.ServiceInstanceName.ToString();
+        _lastSeenUtc.TryRemove(instanceKey, out _);
+        _knownFriendlyNames.TryRemove(instanceKey, out _);
+        DeviceRemoved?.Invoke(this, instanceKey);
     }
 
     private void OnAnswerReceived(object? sender, MessageEventArgs e)
@@ -269,6 +298,16 @@ public sealed class MdnsDiscoveryService : IDisposable
                 .SelectMany(t => t.Strings)
                 .Select(ParseTxtFriendlyName)
                 .FirstOrDefault(n => n != null);
+
+            var instanceKey = srv.Name.ToString();
+            if (friendlyName != null)
+            {
+                _knownFriendlyNames[instanceKey] = friendlyName;
+            }
+            else
+            {
+                _knownFriendlyNames.TryGetValue(instanceKey, out friendlyName);
+            }
 
             var inlineAddress = records.OfType<AddressRecord>().FirstOrDefault(a => a.Name == srv.Target && IsIPv4(a));
             if (inlineAddress != null)
@@ -361,9 +400,11 @@ public sealed class MdnsDiscoveryService : IDisposable
         }
 
         _pendingByHost.Clear();
+        _knownFriendlyNames.Clear();
         _selfProfile = null;
         _selfAddresses.Clear();
         _selfPort = -1;
+        _lastAdvertisedFriendlyName = null;
     }
 
     public void Dispose() => Stop();

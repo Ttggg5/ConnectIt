@@ -355,6 +355,7 @@
             <!-- ===================== 設定畫面 ===================== -->
             <Grid x:Name="SettingsViewRoot" AutomationProperties.AutomationId="SettingsViewRoot"
                   Margin="16" Visibility="Collapsed">
+                <ScrollViewer VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
                 <StackPanel MaxWidth="420" HorizontalAlignment="Left" VerticalAlignment="Top">
                     <TextBlock Text="設定" FontSize="20" FontWeight="Bold" Margin="0,0,0,16"/>
 
@@ -430,7 +431,79 @@
                             </Grid>
                         </StackPanel>
                     </materialDesign:Card>
+
+                    <materialDesign:Card Padding="16" Margin="0,16,0,0">
+                        <StackPanel>
+                            <TextBlock Text="連線設定" FontWeight="Medium" FontSize="15"/>
+                            <TextBlock Text="監聽連接埠(留空 = 系統自動指派,變更需要重新啟動 App)與主動連線的逾時秒數。"
+                                       Opacity="0.6" FontSize="12" Margin="0,4,0,16" TextWrapping="Wrap"/>
+
+                            <TextBox x:Name="PreferredPortTextBox" AutomationProperties.AutomationId="PreferredPortTextBox"
+                                     materialDesign:HintAssist.Hint="監聽連接埠"
+                                     Style="{StaticResource MaterialDesignOutlinedTextBox}"
+                                     Width="160" HorizontalAlignment="Left" Margin="0,0,0,12"
+                                     PreviewTextInput="PreferredPortTextBox_PreviewTextInput"
+                                     KeyDown="PreferredPortTextBox_KeyDown"
+                                     LostFocus="PreferredPortTextBox_LostFocus"/>
+
+                            <TextBox x:Name="ConnectTimeoutTextBox" AutomationProperties.AutomationId="ConnectTimeoutTextBox"
+                                     materialDesign:HintAssist.Hint="連線逾時秒數"
+                                     Style="{StaticResource MaterialDesignOutlinedTextBox}"
+                                     Width="160" HorizontalAlignment="Left"
+                                     PreviewTextInput="ConnectTimeoutTextBox_PreviewTextInput"
+                                     KeyDown="ConnectTimeoutTextBox_KeyDown"
+                                     LostFocus="ConnectTimeoutTextBox_LostFocus"/>
+                        </StackPanel>
+                    </materialDesign:Card>
+
+                    <materialDesign:Card Padding="16" Margin="0,16,0,0">
+                        <StackPanel>
+                            <TextBlock Text="通知" FontWeight="Medium" FontSize="15"/>
+                            <TextBlock Text="建立連線、收到檔案/資料夾、對方斷線時是否跳出系統匣氣泡通知(連線請求一律會跳出確認對話框,不受此設定影響)。"
+                                       Opacity="0.6" FontSize="12" Margin="0,4,0,12" TextWrapping="Wrap"/>
+                            <CheckBox x:Name="NotificationsEnabledCheckBox" AutomationProperties.AutomationId="NotificationsEnabledCheckBox"
+                                      Content="啟用通知" Checked="NotificationsEnabledCheckBox_Changed" Unchecked="NotificationsEnabledCheckBox_Changed"/>
+                        </StackPanel>
+                    </materialDesign:Card>
+
+                    <materialDesign:Card Padding="16" Margin="0,16,0,0">
+                        <StackPanel>
+                            <TextBlock Text="開機" FontWeight="Medium" FontSize="15"/>
+                            <TextBlock Text="開機時自動啟動並直接隱藏到系統匣。" Opacity="0.6" FontSize="12"
+                                       Margin="0,4,0,12" TextWrapping="Wrap"/>
+                            <CheckBox x:Name="AutoStartCheckBox" AutomationProperties.AutomationId="AutoStartCheckBox"
+                                      Content="開機時自動啟動" Checked="AutoStartCheckBox_Changed" Unchecked="AutoStartCheckBox_Changed"/>
+                        </StackPanel>
+                    </materialDesign:Card>
+
+                    <materialDesign:Card Padding="16" Margin="0,16,0,0">
+                        <StackPanel>
+                            <TextBlock Text="信任的裝置" FontWeight="Medium" FontSize="15"/>
+                            <TextBlock Text="信任的裝置送出連線請求時會直接自動接受,不再跳出確認對話框。"
+                                       Opacity="0.6" FontSize="12" Margin="0,4,0,12" TextWrapping="Wrap"/>
+                            <TextBlock x:Name="TrustedDevicesEmptyText" Opacity="0.5" FontSize="12"
+                                       Text="目前沒有信任的裝置(可在收到連線請求時勾選「信任此裝置」加入)。"/>
+                            <ItemsControl x:Name="TrustedDevicesItemsControl">
+                                <ItemsControl.ItemTemplate>
+                                    <DataTemplate>
+                                        <Grid Margin="0,4">
+                                            <Grid.ColumnDefinitions>
+                                                <ColumnDefinition Width="*"/>
+                                                <ColumnDefinition Width="Auto"/>
+                                            </Grid.ColumnDefinitions>
+                                            <TextBlock Grid.Column="0" Text="{Binding}" VerticalAlignment="Center"/>
+                                            <Button Grid.Column="1" Tag="{Binding}" Click="UntrustDeviceButton_Click"
+                                                    Style="{StaticResource MaterialDesignIconButton}" Width="32" Height="32">
+                                                <materialDesign:PackIcon Kind="Close" Width="16" Height="16"/>
+                                            </Button>
+                                        </Grid>
+                                    </DataTemplate>
+                                </ItemsControl.ItemTemplate>
+                            </ItemsControl>
+                        </StackPanel>
+                    </materialDesign:Card>
                 </StackPanel>
+                </ScrollViewer>
             </Grid>
 
             <!-- ===================== 影片網站畫面(嵌入式瀏覽器) ===================== -->

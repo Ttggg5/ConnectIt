@@ -28,6 +28,9 @@ public partial class MainWindow : Window
     private readonly ThemeService _themeService = new();
     private readonly FileTransferSettingsService _fileTransferSettings = new();
     private readonly DiscoverySettingsService _discoverySettings = new();
+    private readonly TrustedDevicesService _trustedDevices = new();
+    private readonly ConnectionSettingsService _connectionSettings = new();
+    private readonly StartupService _startupService = new();
     private readonly ObservableCollection<DiscoveredDevice> _devices = new();
 
     // 影片伺服器功能是完全獨立於裝置配對連線的:自己一組 mDNS 服務類型(廣播/搜尋「誰開了影片伺服器」)、
@@ -76,6 +79,12 @@ public partial class MainWindow : Window
         DownloadFolderTextBox.Text = _fileTransferSettings.DownloadFolder;
         SearchDurationTextBox.Text = _discoverySettings.SearchDurationSeconds.ToString();
 
+        NotificationsEnabledCheckBox.IsChecked = ((App)Application.Current).NotificationSettings.NotificationsEnabled;
+        AutoStartCheckBox.IsChecked = _startupService.IsEnabled;
+        PreferredPortTextBox.Text = _connectionSettings.PreferredPort == 0 ? string.Empty : _connectionSettings.PreferredPort.ToString();
+        ConnectTimeoutTextBox.Text = _connectionSettings.ConnectTimeoutSeconds.ToString();
+        RefreshTrustedDevicesList();
+
         NavListBox.SelectedIndex = 0;
 
         Loaded += MainWindow_Loaded;
@@ -118,7 +127,8 @@ public partial class MainWindow : Window
     {
         // 一開機就自動廣播、自動開始監聽,不需要使用者手動按按鈕。
         _discovery.Start();
-        _connection.StartListening();
+        _connection.ConnectTimeout = TimeSpan.FromSeconds(_connectionSettings.ConnectTimeoutSeconds);
+        _connection.StartListening(_connectionSettings.PreferredPort);
         AdvertiseCurrentName();
 
         StartSearchCycle();
@@ -319,6 +329,86 @@ public partial class MainWindow : Window
         SearchDurationTextBox.Text = _discoverySettings.SetSearchDurationSeconds(seconds).ToString();
     }
 
+    private void NotificationsEnabledCheckBox_Changed(object sender, RoutedEventArgs e)
+    {
+        ((App)Application.Current).NotificationSettings.SetNotificationsEnabled(NotificationsEnabledCheckBox.IsChecked == true);
+    }
+
+    private void AutoStartCheckBox_Changed(object sender, RoutedEventArgs e)
+    {
+        _startupService.SetEnabled(AutoStartCheckBox.IsChecked == true);
+    }
+
+    private void RefreshTrustedDevicesList()
+    {
+        TrustedDevicesItemsControl.ItemsSource = _trustedDevices.TrustedDevices.OrderBy(name => name, StringComparer.OrdinalIgnoreCase).ToList();
+        TrustedDevicesEmptyText.Visibility = _trustedDevices.TrustedDevices.Count == 0 ? Visibility.Visible : Visibility.Collapsed;
+    }
+
+    private void UntrustDeviceButton_Click(object sender, RoutedEventArgs e)
+    {
+        if (sender is not Button { Tag: string name })
+        {
+            return;
+        }
+
+        _trustedDevices.Untrust(name);
+        RefreshTrustedDevicesList();
+    }
+
+    private void PreferredPortTextBox_PreviewTextInput(object sender, TextCompositionEventArgs e)
+    {
+        e.Handled = !e.Text.All(char.IsDigit);
+    }
+
+    private void PreferredPortTextBox_KeyDown(object sender, KeyEventArgs e)
+    {
+        if (e.Key == Key.Enter)
+        {
+            ApplyPreferredPort();
+            Keyboard_ClearFocus();
+        }
+    }
+
+    private void PreferredPortTextBox_LostFocus(object sender, RoutedEventArgs e) => ApplyPreferredPort();
+
+    /// <summary>套用監聽連接埠設定,留空代表交由系統自動指派;變更只會在下次啟動 App 時生效。</summary>
+    private void ApplyPreferredPort()
+    {
+        var port = int.TryParse(PreferredPortTextBox.Text, out var parsed) ? parsed : 0;
+        var applied = _connectionSettings.SetPreferredPort(port);
+        PreferredPortTextBox.Text = applied == 0 ? string.Empty : applied.ToString();
+    }
+
+    private void ConnectTimeoutTextBox_PreviewTextInput(object sender, TextCompositionEventArgs e)
+    {
+        e.Handled = !e.Text.All(char.IsDigit);
+    }
+
+    private void ConnectTimeoutTextBox_KeyDown(object sender, KeyEventArgs e)
+    {
+        if (e.Key == Key.Enter)
+        {
+            ApplyConnectTimeout();
+            Keyboard_ClearFocus();
+        }
+    }
+
+    private void ConnectTimeoutTextBox_LostFocus(object sender, RoutedEventArgs e) => ApplyConnectTimeout();
+
+    /// <summary>套用主動連線的逾時秒數,超出合理範圍會被夾住,立即套用到目前的 ConnectionService。</summary>
+    private void ApplyConnectTimeout()
+    {
+        if (!int.TryParse(ConnectTimeoutTextBox.Text, out var seconds))
+        {
+            seconds = ConnectionSettingsService.DefaultConnectTimeoutSeconds;
+        }
+
+        var applied = _connectionSettings.SetConnectTimeoutSeconds(seconds);
+        ConnectTimeoutTextBox.Text = applied.ToString();
+        _connection.ConnectTimeout = TimeSpan.FromSeconds(applied);
+    }
+
     private void UpdateEmptyState()
     {
         var searching = SearchProgressBar.Visibility == Visibility.Visible;
@@ -362,28 +452,44 @@ public partial class MainWindow : Window
         // 用 BeginInvoke 讓它變成一般排隊的 UI 操作,行為就跟一般 Click 事件叫出對話框一樣正常。
         Dispatcher.BeginInvoke(() =>
         {
+            if (_trustedDevices.IsTrusted(e.RequesterName))
+            {
+                AppendLog($"已自動接受信任裝置「{e.RequesterName}」的連線請求。");
+                e.Respond(true);
+                return;
+            }
+
             var dialogResultTask = ShowConnectionRequestDialog(e.RequesterName, e.RequesterAddress);
-            _ = RespondWhenDialogClosedAsync(dialogResultTask, e);
+            _ = RespondWhenDialogClosedAsync(dialogResultTask, e, _trustedDevices);
         });
     }
 
-    private static async Task RespondWhenDialogClosedAsync(Task<bool> dialogResultTask, ConnectionRequestedEventArgs e)
+    private static async Task RespondWhenDialogClosedAsync(
+        Task<(bool Accepted, bool Trust)> dialogResultTask, ConnectionRequestedEventArgs e, TrustedDevicesService trustedDevices)
     {
         bool accepted;
+        bool trust;
         try
         {
-            accepted = await dialogResultTask;
+            (accepted, trust) = await dialogResultTask;
         }
         catch
         {
             accepted = false;
+            trust = false;
+        }
+
+        if (accepted && trust)
+        {
+            trustedDevices.Trust(e.RequesterName);
         }
 
         e.Respond(accepted);
     }
 
-    /// <summary>必須在 UI 執行緒上呼叫。同步建立並顯示確認對話框,回傳使用者按下按鈕後才會完成的 Task。</summary>
-    private Task<bool> ShowConnectionRequestDialog(string requesterName, IPAddress address)
+    /// <summary>必須在 UI 執行緒上呼叫。同步建立並顯示確認對話框,回傳使用者按下按鈕後才會完成的 Task
+    /// (是否接受、是否同時勾選了「信任此裝置」)。</summary>
+    private Task<(bool Accepted, bool Trust)> ShowConnectionRequestDialog(string requesterName, IPAddress address)
     {
         var panel = new StackPanel { MinWidth = 280, HorizontalAlignment = HorizontalAlignment.Center };
         panel.Children.Add(new PackIcon
@@ -409,8 +515,16 @@ public partial class MainWindow : Window
             Opacity = 0.6,
             FontSize = 12,
             HorizontalAlignment = HorizontalAlignment.Center,
-            Margin = new Thickness(0, 0, 0, 20),
+            Margin = new Thickness(0, 0, 0, 12),
         });
+
+        var trustCheckBox = new CheckBox
+        {
+            Content = "信任此裝置,之後自動接受",
+            HorizontalAlignment = HorizontalAlignment.Center,
+            Margin = new Thickness(0, 0, 0, 16),
+        };
+        panel.Children.Add(trustCheckBox);
 
         var buttonPanel = new StackPanel { Orientation = Orientation.Horizontal, HorizontalAlignment = HorizontalAlignment.Center };
         var rejectButton = new Button
@@ -430,16 +544,16 @@ public partial class MainWindow : Window
         buttonPanel.Children.Add(acceptButton);
         panel.Children.Add(buttonPanel);
 
-        var tcs = new TaskCompletionSource<bool>();
+        var tcs = new TaskCompletionSource<(bool Accepted, bool Trust)>();
         rejectButton.Click += (_, _) =>
         {
             DialogHost.Close("RootDialog");
-            tcs.TrySetResult(false);
+            tcs.TrySetResult((false, false));
         };
         acceptButton.Click += (_, _) =>
         {
             DialogHost.Close("RootDialog");
-            tcs.TrySetResult(true);
+            tcs.TrySetResult((true, trustCheckBox.IsChecked == true));
         };
 
         var card = new Border
@@ -467,6 +581,7 @@ public partial class MainWindow : Window
             SetActivePage(AppPage.Devices);
 
             AppendLog($"已與 {e.RemoteName} ({e.RemoteAddress}) 建立連線。");
+            ((App)Application.Current).ShowConnectionAlert("已建立連線", $"已與 {e.RemoteName} 建立連線。");
         });
     }
 

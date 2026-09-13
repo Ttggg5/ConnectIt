@@ -22,8 +22,8 @@ public sealed class ConnectionService : IDisposable
     // TcpClient.ConnectAsync() 本身沒有逾時機制——如果對方位址不可達(例如撿到一個實際上
     // 不可路由的位址),很多網路環境會直接把 SYN 封包丟掉而不回 RST,這個 await 就會永遠掛著,
     // 使用者會覺得「按下去完全沒反應」卻連個錯誤訊息都看不到。額外套一個逾時,至少能明確
-    // 回報「連線逾時」讓使用者知道發生了什麼事。
-    private static readonly TimeSpan ConnectTimeout = TimeSpan.FromSeconds(8);
+    // 回報「連線逾時」讓使用者知道發生了什麼事。可在設定頁調整(見 ConnectionSettingsService)。
+    public TimeSpan ConnectTimeout { get; set; } = TimeSpan.FromSeconds(8);
 
     // 訊框長度前綴的長度(4 bytes),以及單一訊框的長度上限(1 型別 byte + 資料),
     // 避免對方送出異常大的長度值時整個配置一大塊記憶體。
@@ -87,8 +87,18 @@ public sealed class ConnectionService : IDisposable
     {
         StopListening();
 
-        _listener = new TcpListener(IPAddress.Any, preferredPort);
-        _listener.Start();
+        try
+        {
+            _listener = new TcpListener(IPAddress.Any, preferredPort);
+            _listener.Start();
+        }
+        catch (SocketException) when (preferredPort != 0)
+        {
+            StatusChanged?.Invoke(this, $"連接埠 {preferredPort} 無法使用,已改用系統自動指派的連接埠。");
+            _listener = new TcpListener(IPAddress.Any, 0);
+            _listener.Start();
+        }
+
         Port = ((IPEndPoint)_listener.LocalEndpoint).Port;
 
         _acceptCts = new CancellationTokenSource();

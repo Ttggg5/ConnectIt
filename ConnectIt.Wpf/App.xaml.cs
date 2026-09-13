@@ -1,9 +1,11 @@
 using System.Configuration;
 using System.Data;
 using System.Drawing;
+using System.Linq;
 using System.Threading;
 using System.Windows;
 using System.Windows.Forms;
+using ConnectIt.Wpf.Services;
 using Application = System.Windows.Application;
 
 namespace ConnectIt.Wpf;
@@ -21,8 +23,13 @@ public partial class App : Application
     private Mutex? _singleInstanceMutex;
     private EventWaitHandle? _activateEvent;
 
+    private readonly NotificationSettingsService _notificationSettings = new();
+
     // 讓 MainWindow 判斷:目前是使用者按了系統匣的「結束」,還是只是想關閉視窗(此時要改成隱藏到系統匣)。
     public bool IsExiting { get; private set; }
+
+    /// <summary>設定頁的「通知」開關讀寫這個,供 <see cref="ShowConnectionAlert"/> 判斷是否要顯示。</summary>
+    public NotificationSettingsService NotificationSettings => _notificationSettings;
 
     protected override void OnStartup(StartupEventArgs e)
     {
@@ -51,6 +58,15 @@ public partial class App : Application
 
         base.OnStartup(e);
         InitializeTrayIcon();
+
+        // 手動建立/顯示主視窗(App.xaml 不再用 StartupUri),這樣「開機自動啟動」
+        // (見 StartupService)可以帶入 --minimized 參數,開機時直接留在系統匣,不彈出主視窗。
+        var window = new MainWindow();
+        MainWindow = window;
+        if (!e.Args.Any(arg => string.Equals(arg, StartupService.MinimizedStartupArg, StringComparison.OrdinalIgnoreCase)))
+        {
+            window.Show();
+        }
     }
 
     /// <summary>背景執行緒等待其他(被擋下的)實例送來的訊號,收到就在 UI 執行緒把主視窗叫出來。</summary>
@@ -125,9 +141,15 @@ public partial class App : Application
     /// <summary>
     /// 通知使用者連線狀態的重要變化(對方傳來檔案/資料夾被自動接受、對方中斷連線),
     /// 不需要使用者手動確認的事件會靠這個系統匣氣泡提示曝光——尤其是視窗被隱藏到系統匣時。
+    /// 可在設定頁關閉(見 NotificationSettingsService),關閉後這裡直接不顯示。
     /// </summary>
     public void ShowConnectionAlert(string title, string message)
     {
+        if (!_notificationSettings.NotificationsEnabled)
+        {
+            return;
+        }
+
         _notifyIcon?.ShowBalloonTip(3000, title, message, ToolTipIcon.Info);
     }
 
