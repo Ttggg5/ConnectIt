@@ -75,6 +75,15 @@ public partial class App : Application
             ToolTipIcon.Info);
     }
 
+    /// <summary>
+    /// 通知使用者連線狀態的重要變化(對方傳來檔案/資料夾被自動接受、對方中斷連線),
+    /// 不需要使用者手動確認的事件會靠這個系統匣氣泡提示曝光——尤其是視窗被隱藏到系統匣時。
+    /// </summary>
+    public void ShowConnectionAlert(string title, string message)
+    {
+        _notifyIcon?.ShowBalloonTip(3000, title, message, ToolTipIcon.Info);
+    }
+
     public void RequestExit()
     {
         IsExiting = true;

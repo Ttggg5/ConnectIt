@@ -41,15 +41,6 @@ public partial class MainWindow : Window
 
     private CancellationTokenSource? _searchCts;
 
-    // 收到檔案傳輸提議時開出的確認對話框:記著是哪個 transferId,這樣如果對方在使用者回應前就
-    // 取消了提議,可以把這個還開著的對話框強制關掉,而不是讓它永遠停在畫面上。
-    private TaskCompletionSource<bool>? _pendingFileOfferTcs;
-    private string? _pendingFileOfferTransferId;
-
-    // 資料夾傳輸提議的確認對話框,道理跟上面的檔案提議一樣。
-    private TaskCompletionSource<bool>? _pendingFolderOfferTcs;
-    private string? _pendingFolderOfferTransferId;
-
     public MainWindow()
     {
         InitializeComponent();
@@ -597,202 +588,27 @@ public partial class MainWindow : Window
     private void OnFileOffered(object? sender, FileOfferedEventArgs e)
     {
         // 跟 OnConnectionRequested 一樣,這是從背景的 TCP 讀取迴圈觸發的,要排到 UI 執行緒處理。
-        Dispatcher.BeginInvoke(() => _ = HandleFileOfferedAsync(e));
-    }
-
-    private async Task HandleFileOfferedAsync(FileOfferedEventArgs e)
-    {
-        var accepted = await ShowFileOfferDialog(e.TransferId, e.FileName, e.FileSize);
-        _pendingFileOfferTcs = null;
-        _pendingFileOfferTransferId = null;
-
-        _connection.RespondToFileOffer(e.TransferId, accepted, _fileTransferSettings.DownloadFolder);
-
-        if (accepted)
+        // 對方能送出檔案提議,前提是連線已經通過使用者確認過了,所以這裡不再重複詢問,直接接受。
+        Dispatcher.BeginInvoke(() =>
         {
+            _connection.RespondToFileOffer(e.TransferId, true, _fileTransferSettings.DownloadFolder);
             ShowFileTransferPanel(e.FileName, "接收中...");
-        }
-    }
-
-    /// <summary>必須在 UI 執行緒上呼叫。跟 <see cref="ShowConnectionRequestDialog"/> 同樣的對話框樣式,問使用者要不要接收這個檔案。</summary>
-    private Task<bool> ShowFileOfferDialog(string transferId, string fileName, long fileSize)
-    {
-        var panel = new StackPanel { MinWidth = 280, HorizontalAlignment = HorizontalAlignment.Center };
-        panel.Children.Add(new PackIcon
-        {
-            Kind = PackIconKind.Paperclip,
-            Width = 40,
-            Height = 40,
-            HorizontalAlignment = HorizontalAlignment.Center,
-            Foreground = (Brush)FindResource("MaterialDesign.Brush.Primary"),
+            ((App)Application.Current).ShowConnectionAlert(
+                $"{ConnectedDeviceNameText.Text} 正在傳送檔案給你", e.FileName);
         });
-        panel.Children.Add(new TextBlock
-        {
-            Text = "對方想要傳送檔案給你",
-            FontSize = 16,
-            FontWeight = FontWeights.Medium,
-            TextWrapping = TextWrapping.Wrap,
-            TextAlignment = TextAlignment.Center,
-            Margin = new Thickness(0, 16, 0, 4),
-        });
-        panel.Children.Add(new TextBlock
-        {
-            Text = $"{fileName}({FormatBytes(fileSize)})",
-            Opacity = 0.6,
-            FontSize = 12,
-            TextWrapping = TextWrapping.Wrap,
-            TextAlignment = TextAlignment.Center,
-            HorizontalAlignment = HorizontalAlignment.Center,
-            Margin = new Thickness(0, 0, 0, 20),
-        });
-
-        var buttonPanel = new StackPanel { Orientation = Orientation.Horizontal, HorizontalAlignment = HorizontalAlignment.Center };
-        var rejectButton = new Button
-        {
-            Content = "拒絕",
-            Style = (Style)FindResource("MaterialDesignFlatButton"),
-            Margin = new Thickness(0, 0, 8, 0),
-        };
-        var acceptButton = new Button
-        {
-            Content = "接受",
-            Style = (Style)FindResource("MaterialDesignRaisedButton"),
-        };
-        System.Windows.Automation.AutomationProperties.SetAutomationId(rejectButton, "RejectFileButton");
-        System.Windows.Automation.AutomationProperties.SetAutomationId(acceptButton, "AcceptFileButton");
-        buttonPanel.Children.Add(rejectButton);
-        buttonPanel.Children.Add(acceptButton);
-        panel.Children.Add(buttonPanel);
-
-        var tcs = new TaskCompletionSource<bool>();
-        _pendingFileOfferTcs = tcs;
-        _pendingFileOfferTransferId = transferId;
-
-        rejectButton.Click += (_, _) =>
-        {
-            DialogHost.Close("RootDialog");
-            tcs.TrySetResult(false);
-        };
-        acceptButton.Click += (_, _) =>
-        {
-            DialogHost.Close("RootDialog");
-            tcs.TrySetResult(true);
-        };
-
-        var card = new Border
-        {
-            Background = (Brush)FindResource("MaterialDesignPaper"),
-            CornerRadius = new CornerRadius(4),
-            Padding = new Thickness(24),
-            HorizontalAlignment = HorizontalAlignment.Center,
-            VerticalAlignment = VerticalAlignment.Center,
-            Child = panel,
-        };
-
-        _ = DialogHost.Show(card, "RootDialog");
-        return tcs.Task;
     }
 
     private void OnFolderOffered(object? sender, FolderOfferedEventArgs e)
     {
-        // 跟 OnFileOffered 一樣,這是從背景的 TCP 讀取迴圈觸發的,要排到 UI 執行緒處理。
-        Dispatcher.BeginInvoke(() => _ = HandleFolderOfferedAsync(e));
-    }
-
-    private async Task HandleFolderOfferedAsync(FolderOfferedEventArgs e)
-    {
-        var accepted = await ShowFolderOfferDialog(e.TransferId, e.FolderName, e.TotalSize, e.TotalEntries, e.IsBatch);
-        _pendingFolderOfferTcs = null;
-        _pendingFolderOfferTransferId = null;
-
-        _connection.RespondToFolderOffer(e.TransferId, accepted, _fileTransferSettings.DownloadFolder);
-
-        if (accepted)
+        // 跟 OnFileOffered 一樣:連線已經是使用者同意過的,資料夾/多檔案提議不再另外詢問。
+        Dispatcher.BeginInvoke(() =>
         {
+            _connection.RespondToFolderOffer(e.TransferId, true, _fileTransferSettings.DownloadFolder);
             var panelName = e.IsBatch ? $"{e.TotalEntries} 個檔案" : e.FolderName;
             ShowFileTransferPanel(panelName, $"接收中...(共 {e.TotalEntries} 個檔案)");
-        }
-    }
-
-    /// <summary>必須在 UI 執行緒上呼叫。跟 <see cref="ShowFileOfferDialog"/> 同樣的對話框樣式,問使用者要不要接收整個資料夾/多個檔案。</summary>
-    private Task<bool> ShowFolderOfferDialog(string transferId, string folderName, long totalSize, int totalEntries, bool isBatch)
-    {
-        var panel = new StackPanel { MinWidth = 280, HorizontalAlignment = HorizontalAlignment.Center };
-        panel.Children.Add(new PackIcon
-        {
-            Kind = isBatch ? PackIconKind.FileMultiple : PackIconKind.FolderDownload,
-            Width = 40,
-            Height = 40,
-            HorizontalAlignment = HorizontalAlignment.Center,
-            Foreground = (Brush)FindResource("MaterialDesign.Brush.Primary"),
+            ((App)Application.Current).ShowConnectionAlert(
+                $"{ConnectedDeviceNameText.Text} 正在傳送{(e.IsBatch ? "多個檔案" : "資料夾")}給你", panelName);
         });
-        panel.Children.Add(new TextBlock
-        {
-            Text = isBatch ? "對方想要傳送多個檔案給你" : "對方想要傳送資料夾給你",
-            FontSize = 16,
-            FontWeight = FontWeights.Medium,
-            TextWrapping = TextWrapping.Wrap,
-            TextAlignment = TextAlignment.Center,
-            Margin = new Thickness(0, 16, 0, 4),
-        });
-        panel.Children.Add(new TextBlock
-        {
-            Text = isBatch
-                ? $"{totalEntries} 個檔案,共 {FormatBytes(totalSize)}"
-                : $"{folderName}({totalEntries} 個檔案,共 {FormatBytes(totalSize)})",
-            Opacity = 0.6,
-            FontSize = 12,
-            TextWrapping = TextWrapping.Wrap,
-            TextAlignment = TextAlignment.Center,
-            HorizontalAlignment = HorizontalAlignment.Center,
-            Margin = new Thickness(0, 0, 0, 20),
-        });
-
-        var buttonPanel = new StackPanel { Orientation = Orientation.Horizontal, HorizontalAlignment = HorizontalAlignment.Center };
-        var rejectButton = new Button
-        {
-            Content = "拒絕",
-            Style = (Style)FindResource("MaterialDesignFlatButton"),
-            Margin = new Thickness(0, 0, 8, 0),
-        };
-        var acceptButton = new Button
-        {
-            Content = "接受",
-            Style = (Style)FindResource("MaterialDesignRaisedButton"),
-        };
-        System.Windows.Automation.AutomationProperties.SetAutomationId(rejectButton, "RejectFolderButton");
-        System.Windows.Automation.AutomationProperties.SetAutomationId(acceptButton, "AcceptFolderButton");
-        buttonPanel.Children.Add(rejectButton);
-        buttonPanel.Children.Add(acceptButton);
-        panel.Children.Add(buttonPanel);
-
-        var tcs = new TaskCompletionSource<bool>();
-        _pendingFolderOfferTcs = tcs;
-        _pendingFolderOfferTransferId = transferId;
-
-        rejectButton.Click += (_, _) =>
-        {
-            DialogHost.Close("RootDialog");
-            tcs.TrySetResult(false);
-        };
-        acceptButton.Click += (_, _) =>
-        {
-            DialogHost.Close("RootDialog");
-            tcs.TrySetResult(true);
-        };
-
-        var card = new Border
-        {
-            Background = (Brush)FindResource("MaterialDesignPaper"),
-            CornerRadius = new CornerRadius(4),
-            Padding = new Thickness(24),
-            HorizontalAlignment = HorizontalAlignment.Center,
-            VerticalAlignment = VerticalAlignment.Center,
-            Child = panel,
-        };
-
-        _ = DialogHost.Show(card, "RootDialog");
-        return tcs.Task;
     }
 
     private void OnFileTransferProgress(object? sender, FileTransferProgressEventArgs e)
@@ -820,14 +636,6 @@ public partial class MainWindow : Window
     {
         Dispatcher.BeginInvoke(() =>
         {
-            // 如果對方在使用者回應提議之前就把傳輸結束掉(例如取消提議),
-            // 把還開著的確認對話框強制關掉,不然它會一直卡在畫面上。
-            if (e.TransferId == _pendingFileOfferTransferId && _pendingFileOfferTcs is { Task.IsCompleted: false } tcs)
-            {
-                DialogHost.Close("RootDialog");
-                tcs.TrySetResult(false);
-            }
-
             FileTransferCard.Visibility = Visibility.Collapsed;
 
             var message = e.Reason switch
@@ -851,14 +659,6 @@ public partial class MainWindow : Window
     {
         Dispatcher.BeginInvoke(() =>
         {
-            // 如果對方在使用者回應提議之前就把傳輸結束掉(例如取消提議),
-            // 把還開著的確認對話框強制關掉,不然它會一直卡在畫面上。
-            if (e.TransferId == _pendingFolderOfferTransferId && _pendingFolderOfferTcs is { Task.IsCompleted: false } tcs)
-            {
-                DialogHost.Close("RootDialog");
-                tcs.TrySetResult(false);
-            }
-
             FileTransferCard.Visibility = Visibility.Collapsed;
 
             var message = e.IsBatch
@@ -909,8 +709,13 @@ public partial class MainWindow : Window
     {
         Dispatcher.Invoke(() =>
         {
+            var peerName = ConnectedDeviceNameText.Text;
             MainSnackbar.MessageQueue?.Enqueue("對方已中斷連線。");
             ReturnToDiscoveryView("對方已中斷連線。");
+            // NotifyIcon.ShowBalloonTip 在 tipText 為空字串時會丟 ArgumentException——這裡是從
+            // ConnectionService 背景執行緒觸發的事件,例外被吃掉不會有任何錯誤訊息,氣泡也就永遠不會顯示,
+            // 所以訊息一定要給非空字串。
+            ((App)Application.Current).ShowConnectionAlert("連線已中斷", $"{peerName} 已中斷連線。");
         });
     }
 
