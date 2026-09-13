@@ -1,9 +1,11 @@
+using System.Buffers;
 using System.Buffers.Binary;
 using System.IO;
 using System.Net;
 using System.Net.Sockets;
 using System.Text;
 using System.Text.Json;
+using System.Threading.Channels;
 
 namespace ConnectIt.Wpf.Services;
 
@@ -1273,27 +1275,88 @@ public sealed class ConnectionService : IDisposable
         try
         {
             await using var fileStream = new FileStream(transfer.FilePath!, FileMode.Open, FileAccess.Read, FileShare.Read);
-            var buffer = new byte[FileChunkSize];
-            int read;
-            while ((read = await fileStream.ReadAsync(buffer, transfer.Cts.Token).ConfigureAwait(false)) > 0)
-            {
-                await WriteFrameAsync(FrameType.Chunk, buffer.AsMemory(0, read), transfer.Cts.Token).ConfigureAwait(false);
-                transfer.TransferredBytes += read;
 
-                var (folderBytes, folderTotal) = GetFolderProgressTotals(transfer);
-                FileTransferProgress?.Invoke(this, new FileTransferProgressEventArgs
+            // 讀取磁碟(生產者)跟寫入 socket(消費者)用有界 channel 重疊執行,而不是
+            // 完全循序的「讀一塊→寫一塊」——這樣寫入目前這塊的同時就能開始讀下一塊,
+            // 磁碟較慢(例如網路磁碟機、隨身碟)時能明顯縮短整體傳輸時間。
+            using var pipelineCts = CancellationTokenSource.CreateLinkedTokenSource(transfer.Cts.Token);
+            var channel = Channel.CreateBounded<(byte[] Buffer, int Length)>(
+                new BoundedChannelOptions(3) { SingleReader = true, SingleWriter = true });
+
+            var readTask = Task.Run(async () =>
+            {
+                Exception? failure = null;
+                try
                 {
-                    TransferId = transfer.TransferId,
-                    Direction = FileTransferDirection.Sending,
-                    BytesTransferred = transfer.TransferredBytes,
-                    TotalBytes = transfer.TotalBytes,
-                    FolderTransferId = transfer.FolderTransferId,
-                    FileName = transfer.FolderTransferId != null ? transfer.FileName : null,
-                    EntryIndex = transfer.EntryIndex,
-                    TotalEntries = _activeFolderSession?.TotalEntries,
-                    FolderBytesTransferred = folderBytes,
-                    FolderTotalBytes = folderTotal,
-                });
+                    while (true)
+                    {
+                        var chunk = ArrayPool<byte>.Shared.Rent(FileChunkSize);
+                        int read;
+                        try
+                        {
+                            read = await fileStream.ReadAsync(chunk.AsMemory(0, FileChunkSize), pipelineCts.Token).ConfigureAwait(false);
+                        }
+                        catch
+                        {
+                            ArrayPool<byte>.Shared.Return(chunk);
+                            throw;
+                        }
+
+                        if (read <= 0)
+                        {
+                            ArrayPool<byte>.Shared.Return(chunk);
+                            break;
+                        }
+
+                        await channel.Writer.WriteAsync((chunk, read), pipelineCts.Token).ConfigureAwait(false);
+                    }
+                }
+                catch (Exception ex)
+                {
+                    failure = ex;
+                }
+                finally
+                {
+                    channel.Writer.Complete(failure);
+                }
+            });
+
+            try
+            {
+                await foreach (var (chunk, length) in channel.Reader.ReadAllAsync(pipelineCts.Token).ConfigureAwait(false))
+                {
+                    try
+                    {
+                        await WriteFrameAsync(FrameType.Chunk, chunk.AsMemory(0, length), pipelineCts.Token).ConfigureAwait(false);
+                        transfer.TransferredBytes += length;
+
+                        var (folderBytes, folderTotal) = GetFolderProgressTotals(transfer);
+                        FileTransferProgress?.Invoke(this, new FileTransferProgressEventArgs
+                        {
+                            TransferId = transfer.TransferId,
+                            Direction = FileTransferDirection.Sending,
+                            BytesTransferred = transfer.TransferredBytes,
+                            TotalBytes = transfer.TotalBytes,
+                            FolderTransferId = transfer.FolderTransferId,
+                            FileName = transfer.FolderTransferId != null ? transfer.FileName : null,
+                            EntryIndex = transfer.EntryIndex,
+                            TotalEntries = _activeFolderSession?.TotalEntries,
+                            FolderBytesTransferred = folderBytes,
+                            FolderTotalBytes = folderTotal,
+                        });
+                    }
+                    finally
+                    {
+                        ArrayPool<byte>.Shared.Return(chunk);
+                    }
+                }
+            }
+            finally
+            {
+                // 不管消費者迴圈是正常結束還是中途丟例外,都要先讓背景讀取工作停下來,
+                // 才能安全釋放上面的 fileStream——否則讀取工作可能還卡在等 channel 有空位。
+                pipelineCts.Cancel();
+                await readTask.ConfigureAwait(false);
             }
 
             StatusChanged?.Invoke(this, $"「{transfer.FileName}」已送出,等待對方確認接收完成...");
