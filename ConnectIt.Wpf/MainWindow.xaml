@@ -252,6 +252,7 @@
                 <Grid.RowDefinitions>
                     <RowDefinition Height="Auto"/>
                     <RowDefinition Height="Auto"/>
+                    <RowDefinition Height="Auto"/>
                     <RowDefinition Height="*"/>
                 </Grid.RowDefinitions>
 
@@ -298,9 +299,95 @@
                     </StackPanel>
                 </materialDesign:Card>
 
-                <TextBlock Grid.Row="1" Text="區網內的影片伺服器" FontWeight="Medium" Margin="4,0,4,8"/>
+                <!-- ===================== 遙控模式(主機端控制面板) ===================== -->
+                <materialDesign:Card x:Name="RemoteControlCard" Grid.Row="1" Padding="16" Margin="0,0,0,12" Visibility="Collapsed">
+                    <StackPanel>
+                        <StackPanel Orientation="Horizontal" HorizontalAlignment="Stretch">
+                            <materialDesign:PackIcon Kind="RemoteDesktop" Width="24" Height="24" VerticalAlignment="Center"
+                                                      Foreground="{DynamicResource MaterialDesign.Brush.Primary}"/>
+                            <TextBlock Text="遙控模式" FontSize="16" FontWeight="Bold" Margin="12,0,0,0" VerticalAlignment="Center"/>
+                            <ToggleButton x:Name="RemoteControlModeToggle" Margin="16,0,0,0" VerticalAlignment="Center"
+                                          Style="{StaticResource MaterialDesignSwitchToggleButton}"
+                                          Click="RemoteControlModeToggle_Click"/>
+                            <TextBlock Text="開啟後,觀看端只能觀看、無法自行操作,畫面跟著這裡的指令同步。"
+                                       Opacity="0.6" FontSize="12" Margin="12,0,0,0" VerticalAlignment="Center"/>
+                        </StackPanel>
 
-                <Grid Grid.Row="2">
+                        <StackPanel x:Name="RemoteControlDetailPanel" Margin="0,12,0,0" Visibility="Collapsed">
+                            <StackPanel Orientation="Horizontal">
+                                <TextBlock x:Name="RemoteControlNowPlayingText" Text="尚未選擇影片" FontWeight="Medium" VerticalAlignment="Center"/>
+                            </StackPanel>
+                            <Slider x:Name="RemoteControlTimelineSlider" Margin="0,8,0,0"
+                                    Minimum="0" Maximum="1" Value="0" IsEnabled="False"
+                                    PreviewMouseLeftButtonDown="RemoteControlTimelineSlider_PreviewMouseLeftButtonDown"
+                                    PreviewMouseLeftButtonUp="RemoteControlTimelineSlider_PreviewMouseLeftButtonUp"/>
+                            <TextBlock x:Name="RemoteControlPositionText" Text="0:00" Opacity="0.6"/>
+                            <StackPanel Orientation="Horizontal" Margin="0,8,0,0" VerticalAlignment="Center">
+                                <Button x:Name="RemoteControlPreviousButton" Style="{StaticResource MaterialDesignIconButton}"
+                                        ToolTip="上一部" Click="RemoteControlPreviousButton_Click">
+                                    <materialDesign:PackIcon Kind="SkipPrevious"/>
+                                </Button>
+                                <Button x:Name="RemoteControlRewindButton" Style="{StaticResource MaterialDesignIconButton}"
+                                        ToolTip="倒退 10 秒" Click="RemoteControlRewindButton_Click">
+                                    <materialDesign:PackIcon Kind="Rewind10"/>
+                                </Button>
+                                <Button x:Name="RemoteControlPlayPauseButton" Style="{StaticResource MaterialDesignIconButton}"
+                                        ToolTip="播放/暫停" Click="RemoteControlPlayPauseButton_Click">
+                                    <materialDesign:PackIcon x:Name="RemoteControlPlayPauseIcon" Kind="Play"/>
+                                </Button>
+                                <Button x:Name="RemoteControlForwardButton" Style="{StaticResource MaterialDesignIconButton}"
+                                        ToolTip="快轉 10 秒" Click="RemoteControlForwardButton_Click">
+                                    <materialDesign:PackIcon Kind="FastForward10"/>
+                                </Button>
+                                <Button x:Name="RemoteControlNextButton" Style="{StaticResource MaterialDesignIconButton}"
+                                        ToolTip="下一部" Click="RemoteControlNextButton_Click">
+                                    <materialDesign:PackIcon Kind="SkipNext"/>
+                                </Button>
+
+                                <ComboBox x:Name="RemoteControlSpeedComboBox" Width="80" Margin="16,0,0,0" VerticalAlignment="Center"
+                                          ToolTip="播放速度" SelectionChanged="RemoteControlSpeedComboBox_SelectionChanged">
+                                    <ComboBoxItem Content="0.5x" Tag="0.5"/>
+                                    <ComboBoxItem Content="1x" Tag="1" IsSelected="True"/>
+                                    <ComboBoxItem Content="1.25x" Tag="1.25"/>
+                                    <ComboBoxItem Content="1.5x" Tag="1.5"/>
+                                    <ComboBoxItem Content="2x" Tag="2"/>
+                                </ComboBox>
+                            </StackPanel>
+
+                            <StackPanel Orientation="Horizontal" Margin="0,8,0,0" VerticalAlignment="Center">
+                                <Button x:Name="RemoteControlMuteButton" Style="{StaticResource MaterialDesignIconButton}"
+                                        ToolTip="靜音" Click="RemoteControlMuteButton_Click">
+                                    <materialDesign:PackIcon x:Name="RemoteControlMuteIcon" Kind="VolumeHigh"/>
+                                </Button>
+                                <Slider x:Name="RemoteControlVolumeSlider" Width="160" VerticalAlignment="Center"
+                                        Minimum="0" Maximum="1" Value="1" TickFrequency="0.05"
+                                        ValueChanged="RemoteControlVolumeSlider_ValueChanged"/>
+                            </StackPanel>
+
+                            <TextBlock Text="選一部影片開始遙控:" Opacity="0.6" FontSize="12" Margin="0,12,0,4"/>
+                            <ItemsControl x:Name="RemoteControlVideoListItemsControl">
+                                <ItemsControl.ItemsPanel>
+                                    <ItemsPanelTemplate>
+                                        <WrapPanel/>
+                                    </ItemsPanelTemplate>
+                                </ItemsControl.ItemsPanel>
+                                <ItemsControl.ItemTemplate>
+                                    <DataTemplate>
+                                        <Button Style="{StaticResource MaterialDesignOutlinedButton}"
+                                                Margin="0,0,8,8" Padding="12,6" Tag="{Binding}"
+                                                Click="RemoteControlVideoButton_Click">
+                                            <TextBlock Text="{Binding Name}" MaxWidth="200" TextTrimming="CharacterEllipsis"/>
+                                        </Button>
+                                    </DataTemplate>
+                                </ItemsControl.ItemTemplate>
+                            </ItemsControl>
+                        </StackPanel>
+                    </StackPanel>
+                </materialDesign:Card>
+
+                <TextBlock Grid.Row="2" Text="區網內的影片伺服器" FontWeight="Medium" Margin="4,0,4,8"/>
+
+                <Grid Grid.Row="3">
                     <ScrollViewer VerticalScrollBarVisibility="Auto">
                         <ItemsControl x:Name="VideoServersItemsControl">
                             <ItemsControl.ItemTemplate>

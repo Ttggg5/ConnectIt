@@ -32,6 +32,10 @@ public sealed class VideoStreamingService : IDisposable
     // 大家會一起等同一個工作的結果,而不是每個請求都各自重新觸發一次產生。
     private readonly ConcurrentDictionary<string, Task<byte[]?>> _thumbnailCache = new(StringComparer.OrdinalIgnoreCase);
 
+    // 影片長度只有遙控面板畫時間軸時才需要,一樣用 Task 快取,同一支影片整個伺服器存活期間
+    // 只探測一次。
+    private readonly ConcurrentDictionary<string, Task<long?>> _durationCache = new(StringComparer.OrdinalIgnoreCase);
+
     public event EventHandler<string>? StatusChanged;
 
     public bool IsRunning => _listeners.Count > 0;
@@ -41,6 +45,10 @@ public sealed class VideoStreamingService : IDisposable
     public int Port { get; private set; }
 
     public IReadOnlyList<VideoManifestEntry> Manifest { get; private set; } = [];
+
+    /// <summary>遠端控制模式的播放狀態——主機端遙控面板直接呼叫這裡的方法下指令(同一個 process,
+    /// 不用透過網路),觀眾端則透過 <c>GET /control/state</c> 輪詢讀取。</summary>
+    public PlaybackControlState ControlState { get; } = new();
 
     /// <summary>開始分享。<paramref name="path"/> 可以是單一影片檔案,也可以是裝滿影片的資料夾
     /// (見 <see cref="VideoLibraryScanner.BuildManifest"/>)。</summary>
@@ -127,9 +135,23 @@ public sealed class VideoStreamingService : IDisposable
 
         _filesByRelativePath = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
         _thumbnailCache.Clear();
+        _durationCache.Clear();
         Manifest = [];
         BoundAddresses = [];
         Port = 0;
+        ControlState.Reset();
+    }
+
+    /// <summary>供遙控面板畫時間軸用——同一個 process 內直接呼叫,不像縮圖/媒體是走 HTTP 端點。
+    /// 探測失敗(格式不支援/檔案有問題)回傳 null,呼叫端要自行處理「不知道總長度」的情況。</summary>
+    public Task<long?> GetDurationMsAsync(string relativePath)
+    {
+        if (!_filesByRelativePath.TryGetValue(relativePath, out var fullPath))
+        {
+            return Task.FromResult<long?>(null);
+        }
+
+        return _durationCache.GetOrAdd(relativePath, _ => VideoDurationProbe.TryGetDurationMsAsync(fullPath));
     }
 
     public void Dispose() => Stop();
@@ -238,8 +260,28 @@ public sealed class VideoStreamingService : IDisposable
         // (媒體路徑觀看端組 URL 時逐段用 Uri.EscapeDataString 編碼過),要先拆開、解碼才能比對路由。
         var path = Uri.UnescapeDataString(request.Path.Split('?')[0]);
 
+        // 遠端控制模式中,觀眾不該看得到可以自己瀏覽/挑影片的首頁清單——跟原生 App 端「鎖住
+        // VideoServerScreen,只能看主機正在播的那一部」是同一個道理。所以首頁、觀看頁都改成
+        // 完全以主機目前選的影片為準,忽略請求本身要求的是哪一部/哪個排序。
+        var controlSnapshot = ControlState.Snapshot();
+
         if (path is "/" or "/index.html")
         {
+            if (controlSnapshot.Enabled)
+            {
+                if (controlSnapshot.VideoRelativePath is { } activeRelativePath)
+                {
+                    await WriteRedirectAsync(
+                        stream, $"/watch?path={Uri.EscapeDataString(activeRelativePath)}", token).ConfigureAwait(false);
+                }
+                else
+                {
+                    await WriteHtmlAsync(stream, BuildRemoteWaitingPageHtml(), token).ConfigureAwait(false);
+                }
+
+                return;
+            }
+
             // 只有一部影片時不用另外顯示「只有一格」的清單頁,直接跳到觀看頁。
             if (Manifest.Count == 1)
             {
@@ -254,7 +296,28 @@ public sealed class VideoStreamingService : IDisposable
 
         if (path.Equals("/watch", StringComparison.OrdinalIgnoreCase))
         {
-            var index = ParseVideoIndex(request.Path);
+            if (controlSnapshot.Enabled)
+            {
+                if (controlSnapshot.VideoRelativePath is not { } activeRelativePath)
+                {
+                    await WriteHtmlAsync(stream, BuildRemoteWaitingPageHtml(), token).ConfigureAwait(false);
+                    return;
+                }
+
+                // 忽略請求本身要求的是哪一部——不管網址列打的是哪個 v=/path=,遠端控制中一律
+                // 只顯示主機目前選的那一部,這樣觀眾沒有辦法透過改網址繞過鎖定。
+                if (ResolveIndexByRelativePath(activeRelativePath) is not { } activeIndex)
+                {
+                    await WriteStatusOnlyAsync(stream, 404, "Not Found", token).ConfigureAwait(false);
+                    return;
+                }
+
+                await WriteHtmlAsync(
+                    stream, BuildWatchPageHtml(activeIndex, ParseSortOption(request.Path)), token).ConfigureAwait(false);
+                return;
+            }
+
+            var index = ResolveVideoIndex(request.Path);
             if (index is not { } i || i < 0 || i >= Manifest.Count)
             {
                 await WriteStatusOnlyAsync(stream, 404, "Not Found", token).ConfigureAwait(false);
@@ -269,6 +332,12 @@ public sealed class VideoStreamingService : IDisposable
         if (path.Equals("/manifest", StringComparison.OrdinalIgnoreCase))
         {
             await WriteManifestAsync(stream, token).ConfigureAwait(false);
+            return;
+        }
+
+        if (path.Equals("/control/state", StringComparison.OrdinalIgnoreCase))
+        {
+            await WriteControlStateAsync(stream, token).ConfigureAwait(false);
             return;
         }
 
@@ -311,6 +380,32 @@ public sealed class VideoStreamingService : IDisposable
 
     private static int? ParseVideoIndex(string rawPathWithQuery) =>
         int.TryParse(GetQueryParam(rawPathWithQuery, "v"), out var value) ? value : null;
+
+    /// <summary>除了原本以 index 選片("?v=")外,也支援以相對路徑選片("?path=")——遠端控制切換
+    /// 影片時 index 會因為排序方式不同而不穩定,相對路徑才是跨排序、跨裝置都穩定的識別方式。</summary>
+    private int? ResolveVideoIndex(string rawPathWithQuery)
+    {
+        var path = GetQueryParam(rawPathWithQuery, "path");
+        if (path != null)
+        {
+            return ResolveIndexByRelativePath(path);
+        }
+
+        return ParseVideoIndex(rawPathWithQuery);
+    }
+
+    private int? ResolveIndexByRelativePath(string relativePath)
+    {
+        for (var i = 0; i < Manifest.Count; i++)
+        {
+            if (string.Equals(Manifest[i].RelativePath, relativePath, StringComparison.OrdinalIgnoreCase))
+            {
+                return i;
+            }
+        }
+
+        return null;
+    }
 
     // 排序方式清單:(query string 用的值, 下拉選單顯示的文字)。放在同一個地方定義,
     // 避免「合法值檢查」「排序邏輯」「下拉選單選項」三處各自維護一份清單而漏改到某一處。
@@ -466,7 +561,49 @@ public sealed class VideoStreamingService : IDisposable
         .next-overlay[hidden]{display:none;}
         .next-overlay span{font-size:13px;}
         .next-overlay button{background:var(--accent);color:#fff;border:none;border-radius:6px;padding:6px 10px;font-size:12px;cursor:pointer;}
+
+        .player-wrap.remote-controlled .controls{display:none;}
+
+        /* 遠端控制中改成劇院模式(不一定拿得到瀏覽器原生全螢幕權限,因為是輪詢回應後才觸發、
+           不是使用者直接點擊觸發,不算「使用者手勢」——所以額外用純 CSS 讓播放區塊佔滿整個
+           版面當作保底,真正的全螢幕 API 有成功的話畫面也不會衝突。) */
+        body.remote-fullscreen header{display:none;}
+        body.remote-fullscreen main.watch{grid-template-columns:minmax(0,1fr);max-width:none;padding:0;gap:0;}
+        body.remote-fullscreen main.watch .sidebar{display:none;}
+        body.remote-fullscreen main.watch h1,body.remote-fullscreen main.watch .primary>.meta{display:none;}
+        body.remote-fullscreen .player-fullscreen-wrap{height:100vh;}
+        body.remote-fullscreen .player-wrap{border-radius:0;height:100%;display:flex;align-items:center;justify-content:center;}
+        body.remote-fullscreen .player-wrap video{max-height:100vh;height:100vh;}
+
+        .waiting-page{display:flex;align-items:center;justify-content:center;height:100vh;text-align:center;padding:24px;}
+        .waiting-page p{font-size:16px;color:#ccc;}
         """;
+
+    /// <summary>遠端控制模式已開啟、但主機還沒選任何影片時顯示——不能讓觀眾自己從首頁清單挑,
+    /// 只能等主機選好,這裡定期輪詢 <c>/control/state</c>,一有影片就自動跳轉過去。</summary>
+    private string BuildRemoteWaitingPageHtml()
+    {
+        var title = HtmlEncode(_serverName);
+        return $$"""
+            <!doctype html>
+            <html lang="zh-Hant">
+            <head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+            <title>{{title}}</title>
+            <style>{{SharedCss}}</style></head>
+            <body>
+              <main class="waiting-page"><p>遙控模式已開啟,等待主機選擇影片…</p></main>
+              <script>
+                setInterval(function () {
+                  fetch('/control/state').then(function (r) { return r.json(); }).then(function (state) {
+                    if (!state || !state.Enabled) { location.href = '/'; return; }
+                    if (state.VideoRelativePath) { location.href = '/watch?path=' + encodeURIComponent(state.VideoRelativePath); }
+                  }).catch(function () {});
+                }, 800);
+              </script>
+            </body>
+            </html>
+            """;
+    }
 
     private string BuildHomePageHtml(string sort)
     {
@@ -533,6 +670,7 @@ public sealed class VideoStreamingService : IDisposable
         var sortJson = JsonSerializer.Serialize(sort).Replace("</", "<\\/");
         var prevIndexJson = prevIndex is { } p ? p.ToString() : "null";
         var nextIndexJson = nextIndex is { } n ? n.ToString() : "null";
+        var controlStateJson = JsonSerializer.Serialize(ControlState.Snapshot()).Replace("</", "<\\/");
 
         return $$"""
             <!doctype html>
@@ -593,7 +731,7 @@ public sealed class VideoStreamingService : IDisposable
                 {{sidebar}}
               </main>
               <script>{{BackToHomeTrapScript}}</script>
-              <script>{{BuildWatchPageScript(relativePathJson, prevIndexJson, nextIndexJson, sortJson)}}</script>
+              <script>{{BuildWatchPageScript(relativePathJson, prevIndexJson, nextIndexJson, sortJson, controlStateJson)}}</script>
             </body>
             </html>
             """;
@@ -624,10 +762,12 @@ public sealed class VideoStreamingService : IDisposable
             : $"""<a class="side-item" href="/watch?v={i}&sort={sort}">{thumb}{info}</a>""";
     }));
 
-    private static string BuildWatchPageScript(string relativePathJson, string prevIndexJson, string nextIndexJson, string sortJson) => $$"""
+    private static string BuildWatchPageScript(
+        string relativePathJson, string prevIndexJson, string nextIndexJson, string sortJson, string controlStateJson) => $$"""
         (function () {
           var meta = { relativePath: {{relativePathJson}}, prevIndex: {{prevIndexJson}}, nextIndex: {{nextIndexJson}}, sort: {{sortJson}} };
           function watchUrl(index) { return '/watch?v=' + index + '&sort=' + meta.sort; }
+          function watchUrlForPath(path) { return '/watch?path=' + encodeURIComponent(path) + '&sort=' + meta.sort; }
           var ICON_PLAY = '{{Svg(Icons.PlayArrow)}}';
           var ICON_PAUSE = '{{Svg(Icons.Pause)}}';
           var ICON_VOLUME_UP = '{{Svg(Icons.VolumeUp)}}';
@@ -824,6 +964,61 @@ public sealed class VideoStreamingService : IDisposable
             else if (e.key === 'f' || e.key === 'F') { fsBtn.click(); }
             else if (e.key === 'm' || e.key === 'M') { muteBtn.click(); }
           });
+
+          // ===== 遠端控制模式:主機正在控制播放時,鎖住手動控制列,改成跟隨輪詢到的狀態播放 =====
+          var REMOTE_POLL_MS = 800;
+          var REMOTE_DRIFT_THRESHOLD_SEC = 1.5;
+          var REMOTE_RESYNC_COOLDOWN_MS = 1000;
+          var remoteEnabled = false;
+          var lastResyncAt = 0;
+
+          function applyRemoteState(state) {
+            if (!state || !state.Enabled) {
+              if (remoteEnabled) {
+                remoteEnabled = false;
+                playerWrap.classList.remove('remote-controlled');
+                document.body.classList.remove('remote-fullscreen');
+                if (document.fullscreenElement) { document.exitFullscreen().catch(function () {}); }
+              }
+              return;
+            }
+
+            if (!remoteEnabled) {
+              remoteEnabled = true;
+              playerWrap.classList.add('remote-controlled');
+              document.body.classList.add('remote-fullscreen');
+              // 這裡是輪詢回應後才觸發,不是使用者直接點擊觸發,不算瀏覽器要求的「使用者手勢」,
+              // 原生全螢幕 API 很可能會被擋下來——失敗就靠上面的 remote-fullscreen CSS 頂著,
+              // 不需要特別處理這個 rejection。
+              if (!document.fullscreenElement) { fullscreenWrap.requestFullscreen().catch(function () {}); }
+            }
+
+            if (state.VideoRelativePath && state.VideoRelativePath !== meta.relativePath) {
+              location.href = watchUrlForPath(state.VideoRelativePath);
+              return;
+            }
+
+            if (state.IsPlaying && video.paused) { video.play().catch(function () {}); }
+            else if (!state.IsPlaying && !video.paused) { video.pause(); }
+
+            var targetSec = state.PositionMs / 1000;
+            var cooldownActive = (Date.now() - lastResyncAt) < REMOTE_RESYNC_COOLDOWN_MS;
+            if (!cooldownActive && Math.abs(video.currentTime - targetSec) > REMOTE_DRIFT_THRESHOLD_SEC) {
+              video.currentTime = isFinite(video.duration) ? Math.min(targetSec, Math.max(0, video.duration)) : targetSec;
+              lastResyncAt = Date.now();
+            }
+
+            // 遠端控制中,音量/靜音/播放速度也一併跟主機同步(控制列被鎖住了,觀眾本來就
+            // 不能自己調),跟 play/pause 一樣直接套用,不用額外的漂移容忍。
+            if (video.playbackRate !== state.PlaybackRate) { video.playbackRate = state.PlaybackRate; }
+            if (video.muted !== state.Muted) { video.muted = state.Muted; }
+            if (Math.abs(video.volume - state.Volume) > 0.001) { video.volume = state.Volume; }
+          }
+
+          applyRemoteState({{controlStateJson}});
+          setInterval(function () {
+            fetch('/control/state').then(function (r) { return r.json(); }).then(applyRemoteState).catch(function () {});
+          }, REMOTE_POLL_MS);
         })();
         """;
 
@@ -879,7 +1074,22 @@ public sealed class VideoStreamingService : IDisposable
 
     private async Task WriteManifestAsync(NetworkStream stream, CancellationToken token)
     {
-        var payload = JsonSerializer.SerializeToUtf8Bytes(new VideoManifestResponse { Name = _serverName, Entries = Manifest });
+        var payload = JsonSerializer.SerializeToUtf8Bytes(new VideoManifestResponse
+        {
+            Name = _serverName,
+            Entries = Manifest,
+            RemoteControlEnabled = ControlState.Snapshot().Enabled,
+        });
+
+        await WriteHeadersAsync(
+            stream, 200, "OK",
+            [("Content-Type", "application/json"), ("Content-Length", payload.Length.ToString())], token).ConfigureAwait(false);
+        await stream.WriteAsync(payload, token).ConfigureAwait(false);
+    }
+
+    private async Task WriteControlStateAsync(NetworkStream stream, CancellationToken token)
+    {
+        var payload = JsonSerializer.SerializeToUtf8Bytes(ControlState.Snapshot());
 
         await WriteHeadersAsync(
             stream, 200, "OK",

@@ -391,4 +391,136 @@ public class VideoStreamingServiceTests : IDisposable
 
         await Assert.ThrowsAnyAsync<HttpRequestException>(() => _client.GetAsync(url));
     }
+
+    [Fact]
+    public async Task GetControlState_Default_IsDisabledWithNoVideo()
+    {
+        var filePath = CreateFile("movie.mp4", 100);
+        _service.Start(filePath, "server");
+
+        var state = await _client.GetFromJsonAsync<PlaybackStateSnapshot>($"{BaseUrl}/control/state");
+
+        Assert.NotNull(state);
+        Assert.False(state!.Enabled);
+        Assert.Null(state.VideoRelativePath);
+    }
+
+    [Fact]
+    public async Task GetControlState_AfterHostMutatesState_ReflectsLatestValue()
+    {
+        var filePath = CreateFile("movie.mp4", 100);
+        _service.Start(filePath, "server");
+
+        _service.ControlState.SetEnabled(true);
+        _service.ControlState.SetVideo("movie.mp4", startPositionMs: 3_000);
+
+        var state = await _client.GetFromJsonAsync<PlaybackStateSnapshot>($"{BaseUrl}/control/state");
+
+        Assert.NotNull(state);
+        Assert.True(state!.Enabled);
+        Assert.Equal("movie.mp4", state.VideoRelativePath);
+        Assert.True(state.IsPlaying);
+    }
+
+    [Fact]
+    public async Task GetManifest_ReflectsRemoteControlEnabledFlag()
+    {
+        var filePath = CreateFile("movie.mp4", 100);
+        _service.Start(filePath, "server");
+
+        _service.ControlState.SetEnabled(true);
+        var manifest = await _client.GetFromJsonAsync<VideoManifestResponse>($"{BaseUrl}/manifest");
+
+        Assert.NotNull(manifest);
+        Assert.True(manifest!.RemoteControlEnabled);
+    }
+
+    [Fact]
+    public async Task Start_ResetsControlStateFromPreviousSession()
+    {
+        var filePath = CreateFile("movie.mp4", 100);
+        _service.Start(filePath, "server");
+        _service.ControlState.SetEnabled(true);
+        _service.ControlState.SetVideo("movie.mp4");
+
+        _service.Stop();
+        _service.Start(filePath, "server");
+
+        var state = await _client.GetFromJsonAsync<PlaybackStateSnapshot>($"{BaseUrl}/control/state");
+        Assert.NotNull(state);
+        Assert.False(state!.Enabled);
+        Assert.Null(state.VideoRelativePath);
+    }
+
+    [Fact]
+    public async Task GetWatch_WithPathQueryParam_ResolvesSameVideoAsIndex()
+    {
+        CreateFile("a.mp4", 100);
+        CreateFile(Path.Combine("sub", "b.mkv"), 200);
+        _service.Start(_tempDirectory, "server");
+
+        using var response = await _client.GetAsync($"{BaseUrl}/watch?path=sub%2Fb.mkv");
+        var html = await response.Content.ReadAsStringAsync();
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        Assert.Contains("/media/sub/b.mkv", html);
+    }
+
+    [Fact]
+    public async Task GetRoot_RemoteControlEnabledWithVideoChosen_RedirectsToThatVideo()
+    {
+        CreateFile("a.mp4", 100);
+        CreateFile("b.mkv", 100);
+        _service.Start(_tempDirectory, "server");
+        _service.ControlState.SetEnabled(true);
+        _service.ControlState.SetVideo("b.mkv");
+
+        using var noRedirectClient = new HttpClient(new HttpClientHandler { AllowAutoRedirect = false });
+        using var response = await noRedirectClient.GetAsync(BaseUrl + "/");
+
+        Assert.Equal(HttpStatusCode.Found, response.StatusCode);
+        Assert.Equal("/watch?path=b.mkv", response.Headers.Location?.OriginalString);
+    }
+
+    [Fact]
+    public async Task GetRoot_RemoteControlEnabledWithNoVideoChosen_ShowsWaitingPageNotTheGrid()
+    {
+        CreateFile("a.mp4", 100);
+        CreateFile("b.mkv", 100);
+        _service.Start(_tempDirectory, "server");
+        _service.ControlState.SetEnabled(true);
+
+        var html = await _client.GetStringAsync(BaseUrl + "/");
+
+        Assert.Contains("等待主機選擇影片", html);
+        Assert.DoesNotContain("class=\"card\"", html);
+    }
+
+    [Fact]
+    public async Task GetWatch_RemoteControlEnabled_IgnoresRequestedVideoAndAlwaysShowsHostChoice()
+    {
+        CreateFile("a.mp4", 100);
+        CreateFile("b.mkv", 100);
+        _service.Start(_tempDirectory, "server");
+        _service.ControlState.SetEnabled(true);
+        _service.ControlState.SetVideo("b.mkv");
+
+        // 觀眾自己在網址列打 v=0(a.mp4),遠端控制中應該完全忽略,一律顯示主機選的 b.mkv。
+        var html = await _client.GetStringAsync($"{BaseUrl}/watch?v=0");
+
+        Assert.Contains("/media/b.mkv", html);
+        Assert.DoesNotContain("/media/a.mp4", html);
+    }
+
+    [Fact]
+    public async Task GetWatch_RemoteControlEnabledWithNoVideoChosen_ShowsWaitingPage()
+    {
+        var filePath = CreateFile("movie.mp4", 100);
+        _service.Start(filePath, "server");
+        _service.ControlState.SetEnabled(true);
+
+        var html = await _client.GetStringAsync($"{BaseUrl}/watch?v=0");
+
+        Assert.Contains("等待主機選擇影片", html);
+    }
 }
