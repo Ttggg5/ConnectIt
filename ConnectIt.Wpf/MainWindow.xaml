@@ -31,20 +31,20 @@
                              SelectionChanged="NavListBox_SelectionChanged">
                         <ListBoxItem AutomationProperties.AutomationId="NavDevicesItem" HorizontalContentAlignment="Center">
                             <StackPanel Margin="0,8" HorizontalAlignment="Center">
-                                <materialDesign:PackIcon Kind="Devices" Width="24" Height="24" HorizontalAlignment="Center"/>
-                                <TextBlock Text="裝置" FontSize="11" Margin="0,4,0,0" HorizontalAlignment="Center"/>
+                                <materialDesign:PackIcon Kind="Devices" Width="24" Height="24" HorizontalAlignment="Center" Foreground="white"/>
+                                <TextBlock Text="裝置" FontSize="11" Margin="0,4,0,0" HorizontalAlignment="Center" Foreground="white"/>
                             </StackPanel>
                         </ListBoxItem>
                         <ListBoxItem AutomationProperties.AutomationId="NavVideoItem" HorizontalContentAlignment="Center">
                             <StackPanel Margin="0,8" HorizontalAlignment="Center">
-                                <materialDesign:PackIcon Kind="VideoBox" Width="24" Height="24" HorizontalAlignment="Center"/>
-                                <TextBlock Text="影片" FontSize="11" Margin="0,4,0,0" HorizontalAlignment="Center"/>
+                                <materialDesign:PackIcon Kind="VideoBox" Width="24" Height="24" HorizontalAlignment="Center" Foreground="white"/>
+                                <TextBlock Text="影片" FontSize="11" Margin="0,4,0,0" HorizontalAlignment="Center" Foreground="white"/>
                             </StackPanel>
                         </ListBoxItem>
                         <ListBoxItem AutomationProperties.AutomationId="NavSettingsItem" HorizontalContentAlignment="Center">
                             <StackPanel Margin="0,8" HorizontalAlignment="Center">
-                                <materialDesign:PackIcon Kind="Cog" Width="24" Height="24" HorizontalAlignment="Center"/>
-                                <TextBlock Text="設定" FontSize="11" Margin="0,4,0,0" HorizontalAlignment="Center"/>
+                                <materialDesign:PackIcon Kind="Cog" Width="24" Height="24" HorizontalAlignment="Center" Foreground="white"/>
+                                <TextBlock Text="設定" FontSize="11" Margin="0,4,0,0" HorizontalAlignment="Center" Foreground="white"/>
                             </StackPanel>
                         </ListBoxItem>
                     </ListBox>
@@ -80,7 +80,7 @@
 
                         <materialDesign:Chip Content="廣播中" Margin="16,0,0,0" VerticalAlignment="Center"
                                               Background="{DynamicResource MaterialDesign.Brush.Primary.Light}"
-                                              Foreground="{DynamicResource MaterialDesign.Brush.Primary.Light.Foreground}">
+                                              Foreground="white">
                             <materialDesign:Chip.Icon>
                                 <materialDesign:PackIcon Kind="Wifi"/>
                             </materialDesign:Chip.Icon>
