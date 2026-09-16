@@ -9,7 +9,7 @@
         mc:Ignorable="d"
         Title="ConnectIt" Height="600" Width="840"
         Icon="Assets/AppIcon.ico"
-        MinHeight="480" MinWidth="640"
+        MinHeight="500" MinWidth="660"
         WindowStartupLocation="CenterScreen"
         Background="{DynamicResource MaterialDesignPaper}"
         TextElement.Foreground="{DynamicResource MaterialDesignBody}"
@@ -24,7 +24,7 @@
             </Grid.ColumnDefinitions>
 
             <!-- ===================== 導覽列 ===================== -->
-            <materialDesign:ColorZone x:Name="NavColorZone" Grid.Column="0" Mode="PrimaryMid" CornerRadius="10" Margin="16, 16, 0, 0"
+            <materialDesign:ColorZone x:Name="NavColorZone" Grid.Column="0" Mode="PrimaryMid" CornerRadius="10" Margin="16"
                                       SizeChanged="NavColorZone_SizeChanged">
                 <StackPanel Width="84">
                     <ListBox x:Name="NavListBox" AutomationProperties.AutomationId="NavListBox"
@@ -525,7 +525,7 @@
                             <TextBlock Text="信任的裝置" FontWeight="Medium" FontSize="15"/>
                             <TextBlock Text="信任的裝置送出連線請求時會直接自動接受,不再跳出確認對話框。"
                                        Opacity="0.6" FontSize="12" Margin="0,4,0,12" TextWrapping="Wrap"/>
-                            <TextBlock x:Name="TrustedDevicesEmptyText" Opacity="0.5" FontSize="12"
+                            <TextBlock x:Name="TrustedDevicesEmptyText" Opacity="0.5" FontSize="12" TextWrapping="Wrap"
                                        Text="目前沒有信任的裝置(可在收到連線請求時勾選「信任此裝置」加入)。"/>
                             <ItemsControl x:Name="TrustedDevicesItemsControl">
                                 <ItemsControl.ItemTemplate>
