@@ -293,12 +293,17 @@ public sealed class VideoStreamingService : IDisposable
             }
 
             var sort = ParseSortOption(request.Path);
-            await WriteHtmlAsync(stream, BuildHomePageHtml(sort), token).ConfigureAwait(false);
+            var flat = GetQueryParam(request.Path, "flat") == "1";
+            var folder = flat ? string.Empty : NormalizeFolder(GetQueryParam(request.Path, "folder"));
+            await WriteHtmlAsync(stream, BuildHomePageHtml(sort, folder, flat), token).ConfigureAwait(false);
             return;
         }
 
         if (path.Equals("/watch", StringComparison.OrdinalIgnoreCase))
         {
+            var watchFlat = GetQueryParam(request.Path, "flat") == "1";
+            var watchFolder = watchFlat ? string.Empty : NormalizeFolder(GetQueryParam(request.Path, "folder"));
+
             if (controlSnapshot.Enabled)
             {
                 if (controlSnapshot.VideoRelativePath is not { } activeRelativePath)
@@ -316,7 +321,7 @@ public sealed class VideoStreamingService : IDisposable
                 }
 
                 await WriteHtmlAsync(
-                    stream, BuildWatchPageHtml(activeIndex, ParseSortOption(request.Path)), token).ConfigureAwait(false);
+                    stream, BuildWatchPageHtml(activeIndex, ParseSortOption(request.Path), watchFolder, watchFlat), token).ConfigureAwait(false);
                 return;
             }
 
@@ -328,7 +333,7 @@ public sealed class VideoStreamingService : IDisposable
             }
 
             var sort = ParseSortOption(request.Path);
-            await WriteHtmlAsync(stream, BuildWatchPageHtml(i, sort), token).ConfigureAwait(false);
+            await WriteHtmlAsync(stream, BuildWatchPageHtml(i, sort, watchFolder, watchFlat), token).ConfigureAwait(false);
             return;
         }
 
@@ -462,9 +467,9 @@ public sealed class VideoStreamingService : IDisposable
         return $"""<option value="{value}"{selected}>{o.Label}</option>""";
     }));
 
-    private static string BuildSortSelectHtml(string selected, string onChangeUrlPrefix) => $$"""
+    private static string BuildSortSelectHtml(string selected, string onChangeUrlPrefix, string onChangeUrlSuffix = "") => $$"""
         <label class="sort-label">排序方式
-          <select onchange="location.href='{{onChangeUrlPrefix}}'+this.value">
+          <select onchange="location.href='{{onChangeUrlPrefix}}'+this.value+'{{onChangeUrlSuffix}}'">
             {{string.Join('\n', SortOptions.Select(o => $"""<option value="{o.Value}"{(o.Value == selected ? " selected" : "")}>{o.Label}</option>"""))}}
           </select>
         </label>
@@ -488,6 +493,7 @@ public sealed class VideoStreamingService : IDisposable
         public const string FullscreenExit = "M5 16h3v3h2v-5H5v2zm3-8H5v2h5V5H8v3zm6 11h2v-3h3v-2h-5v5zm2-11V5h-2v5h5V8h-3z";
         public const string ArrowBack = "M20 11H7.83l5.59-5.59L12 4l-8 8 8 8 1.41-1.41L7.83 13H20v-2z";
         public const string PlayCircle = "M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm-2 14.5v-9l6 4.5-6 4.5z";
+        public const string Folder = "M10 4H4c-1.1 0-2 .9-2 2v12c0 1.1.9 2 2 2h16c1.1 0 2-.9 2-2V8c0-1.1-.9-2-2-2h-8l-2-2z";
         public const string Settings = "M19.14 12.94c.04-.3.06-.61.06-.94 0-.32-.02-.64-.07-.94l2.03-1.58c.18-.14.23-.41.12-.61l-1.92-3.32c-.12-.22-.37-.29-.59-.22l-2.39.96c-.5-.38-1.03-.7-1.62-.94l-.36-2.54c-.04-.24-.24-.41-.48-.41h-3.84c-.24 0-.43.17-.47.41l-.36 2.54c-.59.24-1.13.57-1.62.94l-2.39-.96c-.22-.08-.47 0-.59.22L2.74 8.87c-.12.21-.08.47.12.61l2.03 1.58c-.05.3-.09.63-.09.94s.02.64.07.94l-2.03 1.58c-.18.14-.23.41-.12.61l1.92 3.32c.12.22.37.29.59.22l2.39-.96c.5.38 1.03.7 1.62.94l.36 2.54c.05.24.24.41.48.41h3.84c.24 0 .44-.17.47-.41l.36-2.54c.59-.24 1.13-.56 1.62-.94l2.39.96c.22.08.47 0 .59-.22l1.92-3.32c.12-.22.07-.47-.12-.61l-2.01-1.58zM12 15.6c-1.98 0-3.6-1.62-3.6-3.6s1.62-3.6 3.6-3.6 3.6 1.62 3.6 3.6-1.62 3.6-3.6 3.6z";
     }
 
@@ -596,6 +602,14 @@ public sealed class VideoStreamingService : IDisposable
 
         .waiting-page{display:flex;align-items:center;justify-content:center;height:100vh;text-align:center;padding:24px;}
         .waiting-page p{font-size:16px;color:#ccc;}
+
+        .flatten-toggle{color:#ccc;text-decoration:none;font-size:12px;white-space:nowrap;border:1px solid #3a3a3a;border-radius:6px;padding:6px 10px;}
+        .flatten-toggle:hover{background:#2a2a2a;}
+        .breadcrumb{font-size:13px;color:#aaa;display:flex;gap:6px;flex-wrap:wrap;padding:12px 20px 0;}
+        .breadcrumb a{color:#ccc;text-decoration:none;}
+        .breadcrumb a:hover{text-decoration:underline;}
+        .folder-thumb{color:#f5c451;display:flex;align-items:center;justify-content:center;}
+        .empty-folder{padding:40px 20px;color:#888;text-align:center;}
         """;
 
     /// <summary>遠端控制模式已開啟、但主機還沒選任何影片時顯示——不能讓觀眾自己從首頁清單挑,
@@ -624,24 +638,48 @@ public sealed class VideoStreamingService : IDisposable
             """;
     }
 
-    private string BuildHomePageHtml(string sort)
+    /// <summary>folder/flat 兩個查詢參數共同決定首頁怎麼列影片:預設(flat=false)照實際資料夾結構
+    /// 逐層瀏覽,folder 是目前瀏覽到的相對路徑(空字串代表根目錄);flat=true 則無視資料夾,
+    /// 把整個 manifest 攤平成單一清單(等同這個功能加入前的行為),供使用者在網頁上自行切換。</summary>
+    private string BuildHomePageHtml(string sort, string folder, bool flat)
     {
-        var cards = string.Join('\n', GetDisplayOrder(sort).Select(index =>
+        var extraQuery = BuildExtraQuery(folder, flat);
+        string cardsHtml;
+
+        if (flat)
         {
-            var entry = Manifest[index];
-            return $"""
-                <a class="card" href="/watch?v={index}&sort={sort}">
-                  <div class="thumb">
-                    <div class="thumb-fallback">{Svg(Icons.PlayCircle, 40)}</div>
-                    <img src="/thumbnail/{EscapeRelativePathForUrl(entry.RelativePath)}" alt="" loading="lazy" onerror="this.style.display='none'">
-                  </div>
-                  <div class="title">{HtmlEncode(entry.Name)}</div>
-                  <div class="meta">{FormatFileSize(entry.Size)}</div>
-                </a>
-                """;
-        }));
+            cardsHtml = BuildVideoCardsHtml(GetDisplayOrder(sort), sort, extraQuery);
+        }
+        else
+        {
+            var (subfolders, videoIndices) = GetFolderContents(folder);
+            var videoIndexSet = videoIndices.ToHashSet();
+            var orderedVideoIndices = GetDisplayOrder(sort).Where(videoIndexSet.Contains);
+
+            var folderCards = string.Join('\n', subfolders.Select(name =>
+            {
+                var childPath = folder.Length == 0 ? name : $"{folder}/{name}";
+                var count = CountVideosUnder(childPath);
+                return $"""
+                    <a class="card folder-card" href="/?folder={Uri.EscapeDataString(childPath)}&sort={sort}">
+                      <div class="thumb folder-thumb">{Svg(Icons.Folder, 40)}</div>
+                      <div class="title">{HtmlEncode(name)}</div>
+                      <div class="meta">{count} 部影片</div>
+                    </a>
+                    """;
+            }));
+
+            cardsHtml = subfolders.Count == 0 && videoIndices.Count == 0
+                ? """<p class="empty-folder">這個資料夾是空的。</p>"""
+                : folderCards + "\n" + BuildVideoCardsHtml(orderedVideoIndices, sort, extraQuery);
+        }
 
         var title = HtmlEncode(_serverName);
+        var breadcrumb = flat ? string.Empty : BuildBreadcrumbHtml(folder, sort);
+        var flattenToggle = flat
+            ? $"""<a class="flatten-toggle" href="/?sort={sort}">依資料夾顯示</a>"""
+            : $"""<a class="flatten-toggle" href="/?flat=1&sort={sort}">顯示成單一清單</a>""";
+
         return $"""
             <!doctype html>
             <html lang="zh-Hant">
@@ -651,10 +689,12 @@ public sealed class VideoStreamingService : IDisposable
             <body>
               <header>
                 <h1>{title}</h1>
-                {BuildSortSelectHtml(sort, "/?sort=")}
+                {BuildSortSelectHtml(sort, BuildHomeSortPrefix(folder, flat))}
+                {flattenToggle}
               </header>
+              {breadcrumb}
               <main class="grid">
-                {cards}
+                {cardsHtml}
               </main>
               <script>{BackToHomeTrapScript}</script>
             </body>
@@ -662,31 +702,138 @@ public sealed class VideoStreamingService : IDisposable
             """;
     }
 
-    private string BuildWatchPageHtml(int index, string sort)
+    private string BuildVideoCardsHtml(IEnumerable<int> indices, string sort, string extraQuery) => string.Join('\n', indices.Select(index =>
     {
         var entry = Manifest[index];
-        var order = GetDisplayOrder(sort);
+        return $"""
+            <a class="card" href="/watch?v={index}&sort={sort}{extraQuery}">
+              <div class="thumb">
+                <div class="thumb-fallback">{Svg(Icons.PlayCircle, 40)}</div>
+                <img src="/thumbnail/{EscapeRelativePathForUrl(entry.RelativePath)}" alt="" loading="lazy" onerror="this.style.display='none'">
+              </div>
+              <div class="title">{HtmlEncode(entry.Name)}</div>
+              <div class="meta">{FormatFileSize(entry.Size)}</div>
+            </a>
+            """;
+    }));
+
+    /// <summary>依相對路徑字首比對 <see cref="Manifest"/>,回傳 <paramref name="folder"/> 底下「直屬」的
+    /// 子資料夾名稱(不含更深層的孫層)以及直接放在這一層的影片索引——首頁逐層瀏覽的核心邏輯。
+    /// 只跟 Manifest 的字串比對,不會真的去讀檔案系統,folder 也不需要額外做路徑穿越檢查。</summary>
+    private (List<string> Subfolders, List<int> VideoIndices) GetFolderContents(string folder)
+    {
+        var prefix = folder.Length == 0 ? string.Empty : folder + "/";
+        var subfolders = new List<string>();
+        var videoIndices = new List<int>();
+
+        for (var i = 0; i < Manifest.Count; i++)
+        {
+            var relativePath = Manifest[i].RelativePath;
+            if (prefix.Length > 0 && !relativePath.StartsWith(prefix, StringComparison.OrdinalIgnoreCase))
+            {
+                continue;
+            }
+
+            var remainder = relativePath[prefix.Length..];
+            var slashIndex = remainder.IndexOf('/');
+            if (slashIndex < 0)
+            {
+                videoIndices.Add(i);
+            }
+            else
+            {
+                var name = remainder[..slashIndex];
+                if (!subfolders.Contains(name, StringComparer.OrdinalIgnoreCase))
+                {
+                    subfolders.Add(name);
+                }
+            }
+        }
+
+        subfolders.Sort(StringComparer.OrdinalIgnoreCase);
+        return (subfolders, videoIndices);
+    }
+
+    private int CountVideosUnder(string folderPath)
+    {
+        var prefix = folderPath + "/";
+        return Manifest.Count(e => e.RelativePath.StartsWith(prefix, StringComparison.OrdinalIgnoreCase));
+    }
+
+    private static string NormalizeFolder(string? folder) => string.IsNullOrEmpty(folder) ? string.Empty : folder.Trim('/');
+
+    /// <summary>接在 "&sort={sort}" 後面的額外查詢字串——flat=true 帶 "&flat=1",folder 模式底下
+    /// 非根目錄則帶 "&folder=...",讓 watch 頁的返回/上一部/下一部/側欄連結都能保留目前瀏覽的情境。</summary>
+    private static string BuildExtraQuery(string folder, bool flat) =>
+        flat ? "&flat=1" : (folder.Length == 0 ? string.Empty : $"&folder={Uri.EscapeDataString(folder)}");
+
+    private static string BuildHomeSortPrefix(string folder, bool flat)
+    {
+        if (flat)
+        {
+            return "/?flat=1&sort=";
+        }
+
+        return folder.Length == 0 ? "/?sort=" : $"/?folder={Uri.EscapeDataString(folder)}&sort=";
+    }
+
+    private static string BuildHomeHref(string sort, string folder, bool flat) => BuildHomeSortPrefix(folder, flat) + sort;
+
+    private static string BuildBreadcrumbHtml(string folder, string sort)
+    {
+        if (folder.Length == 0)
+        {
+            return string.Empty;
+        }
+
+        var segments = folder.Split('/');
+        var parts = new List<string> { $"""<a href="/?sort={sort}">首頁</a>""" };
+        var accumulated = string.Empty;
+        for (var i = 0; i < segments.Length; i++)
+        {
+            accumulated = accumulated.Length == 0 ? segments[i] : $"{accumulated}/{segments[i]}";
+            parts.Add(i == segments.Length - 1
+                ? HtmlEncode(segments[i])
+                : $"""<a href="/?folder={Uri.EscapeDataString(accumulated)}&sort={sort}">{HtmlEncode(segments[i])}</a>""");
+        }
+
+        return $"""<nav class="breadcrumb">{string.Join(" / ", parts)}</nav>""";
+    }
+
+    private string BuildWatchPageHtml(int index, string sort, string folder, bool flat)
+    {
+        var entry = Manifest[index];
+
+        // 觀看頁的上一部/下一部、右側清單預設只在「目前這個資料夾」裡走(跟首頁逐層瀏覽一致),
+        // 只有攤平模式才會照全域排序橫跨所有資料夾——不然使用者會在不知情的狀況下被帶去別的
+        // 資料夾。folder 模式下用的還是全域排序,只是先篩選成這個資料夾直屬的影片而已。
+        var order = flat
+            ? GetDisplayOrder(sort)
+            : GetDisplayOrder(sort).Where(GetFolderContents(folder).VideoIndices.ToHashSet().Contains).ToList();
         var position = order.IndexOf(index);
         var hasPrev = position > 0;
         var hasNext = position >= 0 && position < order.Count - 1;
         var prevIndex = hasPrev ? order[position - 1] : (int?)null;
         var nextIndex = hasNext ? order[position + 1] : (int?)null;
+        var extraQuery = BuildExtraQuery(folder, flat);
 
-        var sidebar = Manifest.Count > 1
+        var sidebar = order.Count > 1
             ? $"""
                 <aside class="sidebar">
-                  {BuildSortSelectHtml(sort, $"/watch?v={index}&sort=")}
-                  {BuildSidebarItems(order, index, sort)}
+                  {BuildSortSelectHtml(sort, $"/watch?v={index}&sort=", extraQuery)}
+                  {BuildSidebarItems(order, index, sort, extraQuery)}
                 </aside>
                 """
             : string.Empty;
         var title = HtmlEncode(entry.Name);
         var backLabel = HtmlEncode(_serverName);
+        var homeHref = BuildHomeHref(sort, folder, flat);
 
         // 傳給前端 JS 用的中繼資料,以 JSON 安全編碼字串內容,並把 "</" 斷開避免檔名剛好含有
         // "</script>" 這種字串時提早把 <script> 區塊截斷。
         var relativePathJson = JsonSerializer.Serialize(entry.RelativePath).Replace("</", "<\\/");
         var sortJson = JsonSerializer.Serialize(sort).Replace("</", "<\\/");
+        var extraQueryJson = JsonSerializer.Serialize(extraQuery).Replace("</", "<\\/");
         var prevIndexJson = prevIndex is { } p ? p.ToString() : "null";
         var nextIndexJson = nextIndex is { } n ? n.ToString() : "null";
         var controlStateJson = JsonSerializer.Serialize(ControlState.Snapshot()).Replace("</", "<\\/");
@@ -701,7 +848,7 @@ public sealed class VideoStreamingService : IDisposable
             <title>{{title}}</title>
             <style>{{SharedCss}}</style></head>
             <body>
-              <header><a class="back" href="/?sort={{sort}}">{{Svg(Icons.ArrowBack, 18)}} {{backLabel}}</a></header>
+              <header><a class="back" href="{{homeHref}}">{{Svg(Icons.ArrowBack, 18)}} {{backLabel}}</a></header>
               <main class="watch">
                 <div class="primary">
                   <div class="player-fullscreen-wrap" id="playerFullscreenWrap">
@@ -749,7 +896,7 @@ public sealed class VideoStreamingService : IDisposable
                 {{sidebar}}
               </main>
               <script>{{BackToHomeTrapScript}}</script>
-              <script>{{BuildWatchPageScript(relativePathJson, prevIndexJson, nextIndexJson, sortJson, controlStateJson, defaultVolumeJson, defaultSpeedJson, autoplayCountdownJson)}}</script>
+              <script>{{BuildWatchPageScript(relativePathJson, prevIndexJson, nextIndexJson, sortJson, extraQueryJson, controlStateJson, defaultVolumeJson, defaultSpeedJson, autoplayCountdownJson)}}</script>
             </body>
             </html>
             """;
@@ -757,7 +904,7 @@ public sealed class VideoStreamingService : IDisposable
 
     /// <summary>右側影片清單:依目前選的排序方式列出全部影片(含目前播放中的那一部),每筆都附縮圖,
     /// 目前播放中的那筆用樣式標示、不能再點(不用整個重新導向到自己)。</summary>
-    private string BuildSidebarItems(IReadOnlyList<int> order, int currentIndex, string sort) => string.Join('\n', order.Select(i =>
+    private string BuildSidebarItems(IReadOnlyList<int> order, int currentIndex, string sort, string extraQuery) => string.Join('\n', order.Select(i =>
     {
         var entry = Manifest[i];
         var isCurrent = i == currentIndex;
@@ -777,19 +924,19 @@ public sealed class VideoStreamingService : IDisposable
 
         return isCurrent
             ? $"""<div class="side-item current">{thumb}{info}</div>"""
-            : $"""<a class="side-item" href="/watch?v={i}&sort={sort}">{thumb}{info}</a>""";
+            : $"""<a class="side-item" href="/watch?v={i}&sort={sort}{extraQuery}">{thumb}{info}</a>""";
     }));
 
     private static string BuildWatchPageScript(
-        string relativePathJson, string prevIndexJson, string nextIndexJson, string sortJson, string controlStateJson,
+        string relativePathJson, string prevIndexJson, string nextIndexJson, string sortJson, string extraQueryJson, string controlStateJson,
         string defaultVolumeJson, string defaultSpeedJson, string autoplayCountdownJson) => $$"""
         (function () {
-          var meta = { relativePath: {{relativePathJson}}, prevIndex: {{prevIndexJson}}, nextIndex: {{nextIndexJson}}, sort: {{sortJson}} };
+          var meta = { relativePath: {{relativePathJson}}, prevIndex: {{prevIndexJson}}, nextIndex: {{nextIndexJson}}, sort: {{sortJson}}, extraQuery: {{extraQueryJson}} };
           var DEFAULT_VOLUME_PERCENT = {{defaultVolumeJson}};
           var DEFAULT_SPEED = {{defaultSpeedJson}};
           var AUTOPLAY_COUNTDOWN_SECONDS = {{autoplayCountdownJson}};
-          function watchUrl(index) { return '/watch?v=' + index + '&sort=' + meta.sort; }
-          function watchUrlForPath(path) { return '/watch?path=' + encodeURIComponent(path) + '&sort=' + meta.sort; }
+          function watchUrl(index) { return '/watch?v=' + index + '&sort=' + meta.sort + meta.extraQuery; }
+          function watchUrlForPath(path) { return '/watch?path=' + encodeURIComponent(path) + '&sort=' + meta.sort + meta.extraQuery; }
           var ICON_PLAY = '{{Svg(Icons.PlayArrow)}}';
           var ICON_PAUSE = '{{Svg(Icons.Pause)}}';
           var ICON_VOLUME_UP = '{{Svg(Icons.VolumeUp)}}';

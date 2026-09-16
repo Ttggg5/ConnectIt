@@ -98,10 +98,91 @@ public class VideoStreamingServiceTests : IDisposable
         Assert.Equal(HttpStatusCode.OK, response.StatusCode);
         Assert.StartsWith("text/html", response.Content.Headers.ContentType?.MediaType);
         var html = await response.Content.ReadAsStringAsync();
+
+        // 預設(非攤平)模式下,首頁保留資料夾結構:根目錄項目直接列出,子資料夾裡的影片
+        // 收進一張資料夾卡片,不會直接出現在根目錄清單裡。
+        Assert.Contains("a.mp4", html);
+        Assert.Contains("/watch?v=0", html);
+        Assert.Contains("folder-card", html);
+        Assert.Contains("/?folder=sub&sort=", html);
+        Assert.DoesNotContain("b.mkv", html);
+        Assert.DoesNotContain("/watch?v=1", html);
+    }
+
+    [Fact]
+    public async Task GetRoot_WithFolderQueryParam_ListsVideosInsideThatFolder()
+    {
+        CreateFile("a.mp4", 100);
+        CreateFile(Path.Combine("sub", "b.mkv"), 200);
+        _service.Start(_tempDirectory, "我的資料夾");
+
+        var html = await _client.GetStringAsync(BaseUrl + "/?folder=sub");
+
+        Assert.Contains("b.mkv", html);
+        Assert.Contains("/watch?v=1&sort=name_asc&folder=sub", html);
+        Assert.DoesNotContain("a.mp4", html);
+    }
+
+    [Fact]
+    public async Task GetRoot_WithFlatQueryParam_ListsAllVideosRegardlessOfFolder()
+    {
+        CreateFile("a.mp4", 100);
+        CreateFile(Path.Combine("sub", "b.mkv"), 200);
+        _service.Start(_tempDirectory, "我的資料夾");
+
+        var html = await _client.GetStringAsync(BaseUrl + "/?flat=1");
+
         Assert.Contains("a.mp4", html);
         Assert.Contains("b.mkv", html);
-        Assert.Contains("/watch?v=0", html);
-        Assert.Contains("/watch?v=1", html);
+        Assert.Contains("/watch?v=0&sort=name_asc&flat=1", html);
+        Assert.Contains("/watch?v=1&sort=name_asc&flat=1", html);
+        Assert.DoesNotContain("folder-card", html);
+    }
+
+    [Fact]
+    public async Task GetWatch_FromFolderView_BackLinkAndSidebarPreserveFolderContext()
+    {
+        CreateFile(Path.Combine("sub", "a.mp4"), 100);
+        CreateFile(Path.Combine("sub", "b.mkv"), 200);
+        _service.Start(_tempDirectory, "server");
+
+        var html = await _client.GetStringAsync($"{BaseUrl}/watch?v=0&folder=sub");
+
+        Assert.Contains("class=\"back\" href=\"/?folder=sub&sort=name_asc\"", html);
+        Assert.Contains("href=\"/watch?v=1&sort=name_asc&folder=sub\"", html);
+    }
+
+    [Fact]
+    public async Task GetWatch_FromFolderView_SidebarAndPrevNextOnlyIncludeSameFolderVideos()
+    {
+        // 排序後的全域索引:a.mp4(0)、sub/b.mkv(1)、sub/c.mp4(2)。
+        CreateFile("a.mp4", 100);
+        CreateFile(Path.Combine("sub", "b.mkv"), 200);
+        CreateFile(Path.Combine("sub", "c.mp4"), 300);
+        _service.Start(_tempDirectory, "server");
+
+        var html = await _client.GetStringAsync($"{BaseUrl}/watch?v=1&folder=sub");
+
+        // 上一部/下一部、側欄都只看得到同一個資料夾(sub)裡的影片,根目錄的 a.mp4 不該出現。
+        Assert.Contains("prevIndex: null", html);
+        Assert.Contains("nextIndex: 2", html);
+        Assert.Contains("href=\"/watch?v=2&sort=name_asc&folder=sub\"", html);
+        Assert.DoesNotContain("a.mp4", html);
+    }
+
+    [Fact]
+    public async Task GetWatch_FlatMode_SidebarAndPrevNextIncludeVideosAcrossAllFolders()
+    {
+        CreateFile("a.mp4", 100);
+        CreateFile(Path.Combine("sub", "b.mkv"), 200);
+        CreateFile(Path.Combine("sub", "c.mp4"), 300);
+        _service.Start(_tempDirectory, "server");
+
+        var html = await _client.GetStringAsync($"{BaseUrl}/watch?v=1&flat=1");
+
+        Assert.Contains("prevIndex: 0", html);
+        Assert.Contains("nextIndex: 2", html);
+        Assert.Contains("a.mp4", html);
     }
 
     [Fact]
