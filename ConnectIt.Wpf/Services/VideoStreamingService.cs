@@ -26,6 +26,7 @@ public sealed class VideoStreamingService : IDisposable
     private CancellationTokenSource? _cts;
     private Dictionary<string, string> _filesByRelativePath = new(StringComparer.OrdinalIgnoreCase);
     private string _serverName = string.Empty;
+    private VideoServerPlaybackOptions _options = VideoServerPlaybackOptions.Default;
 
     // 縮圖產生(呼叫 Windows 殼層 API)相對昂貴,同一支影片整個伺服器存活期間只算一次,
     // 存的是 Task 而不是結果本身,這樣同時間好幾個請求剛好都在搶同一支還沒算完的縮圖時,
@@ -51,12 +52,14 @@ public sealed class VideoStreamingService : IDisposable
     public PlaybackControlState ControlState { get; } = new();
 
     /// <summary>開始分享。<paramref name="path"/> 可以是單一影片檔案,也可以是裝滿影片的資料夾
-    /// (見 <see cref="VideoLibraryScanner.BuildManifest"/>)。</summary>
-    public void Start(string path, string serverName)
+    /// (見 <see cref="VideoLibraryScanner.BuildManifest"/>)。<paramref name="options"/> 是使用者在
+    /// 設定頁調整過的自訂選項(預設排序、播放器預設行為、額外副檔名),省略時套用內建預設值。</summary>
+    public void Start(string path, string serverName, VideoServerPlaybackOptions? options = null)
     {
         Stop();
 
-        var (manifest, filesByRelativePath) = VideoLibraryScanner.BuildManifest(path);
+        _options = options ?? VideoServerPlaybackOptions.Default;
+        var (manifest, filesByRelativePath) = VideoLibraryScanner.BuildManifest(path, _options.ExtraExtensions);
         if (manifest.Count == 0)
         {
             StatusChanged?.Invoke(this, "找不到可分享的影片。");
@@ -419,12 +422,10 @@ public sealed class VideoStreamingService : IDisposable
         ("date_asc", "修改時間(舊→新)"),
     ];
 
-    private const string DefaultSort = "name_asc";
-
-    private static string ParseSortOption(string rawPathWithQuery)
+    private string ParseSortOption(string rawPathWithQuery)
     {
         var value = GetQueryParam(rawPathWithQuery, "sort");
-        return value != null && SortOptions.Any(o => o.Value == value) ? value : DefaultSort;
+        return value != null && SortOptions.Any(o => o.Value == value) ? value : _options.DefaultSort;
     }
 
     /// <summary>依排序方式,回傳 manifest 項目「顯示順序」的索引清單(內容還是指向 <see cref="Manifest"/>
@@ -442,6 +443,24 @@ public sealed class VideoStreamingService : IDisposable
             _ => indices.OrderBy(i => Manifest[i].Name, StringComparer.OrdinalIgnoreCase).ToList(),
         };
     }
+
+    private static readonly (double Value, string Label)[] SpeedOptions =
+    [
+        (0.5, "0.5x"),
+        (1, "1x"),
+        (1.25, "1.25x"),
+        (1.5, "1.5x"),
+        (2, "2x"),
+    ];
+
+    private string BuildSpeedOptionsHtml() => string.Join('\n', SpeedOptions.Select(o =>
+    {
+        var selected = Math.Abs(o.Value - _options.DefaultSpeed) < 0.0001 ? " selected" : "";
+        // "0.5"/"1"/"1.25" 這種 invariant 格式跟前端 JS 用同一個字串當 <option value> 比對,
+        // 不能用會受系統語系影響的預設 ToString()。
+        var value = o.Value.ToString(System.Globalization.CultureInfo.InvariantCulture);
+        return $"""<option value="{value}"{selected}>{o.Label}</option>""";
+    }));
 
     private static string BuildSortSelectHtml(string selected, string onChangeUrlPrefix) => $$"""
         <label class="sort-label">排序方式
@@ -671,6 +690,9 @@ public sealed class VideoStreamingService : IDisposable
         var prevIndexJson = prevIndex is { } p ? p.ToString() : "null";
         var nextIndexJson = nextIndex is { } n ? n.ToString() : "null";
         var controlStateJson = JsonSerializer.Serialize(ControlState.Snapshot()).Replace("</", "<\\/");
+        var defaultVolumeJson = _options.DefaultVolumePercent.ToString(System.Globalization.CultureInfo.InvariantCulture);
+        var defaultSpeedJson = _options.DefaultSpeed.ToString(System.Globalization.CultureInfo.InvariantCulture);
+        var autoplayCountdownJson = _options.AutoplayCountdownSeconds.ToString(System.Globalization.CultureInfo.InvariantCulture);
 
         return $$"""
             <!doctype html>
@@ -708,14 +730,10 @@ public sealed class VideoStreamingService : IDisposable
                                 <button id="muteBtn" type="button" title="靜音">{{Svg(Icons.VolumeUp)}}</button>
                                 <input type="range" id="volume" min="0" max="100" value="100">
                               </div>
-                              <label class="settings-row">自動播放下一部 <input type="checkbox" id="autoplayNext" checked></label>
+                              <label class="settings-row">自動播放下一部 <input type="checkbox" id="autoplayNext"{{(_options.AutoplayNext ? " checked" : "")}}></label>
                               <label class="settings-row">播放速度
                                 <select id="speed" title="播放速度">
-                                  <option value="0.5">0.5x</option>
-                                  <option value="1" selected>1x</option>
-                                  <option value="1.25">1.25x</option>
-                                  <option value="1.5">1.5x</option>
-                                  <option value="2">2x</option>
+                                  {{BuildSpeedOptionsHtml()}}
                                 </select>
                               </label>
                             </div>
@@ -731,7 +749,7 @@ public sealed class VideoStreamingService : IDisposable
                 {{sidebar}}
               </main>
               <script>{{BackToHomeTrapScript}}</script>
-              <script>{{BuildWatchPageScript(relativePathJson, prevIndexJson, nextIndexJson, sortJson, controlStateJson)}}</script>
+              <script>{{BuildWatchPageScript(relativePathJson, prevIndexJson, nextIndexJson, sortJson, controlStateJson, defaultVolumeJson, defaultSpeedJson, autoplayCountdownJson)}}</script>
             </body>
             </html>
             """;
@@ -763,9 +781,13 @@ public sealed class VideoStreamingService : IDisposable
     }));
 
     private static string BuildWatchPageScript(
-        string relativePathJson, string prevIndexJson, string nextIndexJson, string sortJson, string controlStateJson) => $$"""
+        string relativePathJson, string prevIndexJson, string nextIndexJson, string sortJson, string controlStateJson,
+        string defaultVolumeJson, string defaultSpeedJson, string autoplayCountdownJson) => $$"""
         (function () {
           var meta = { relativePath: {{relativePathJson}}, prevIndex: {{prevIndexJson}}, nextIndex: {{nextIndexJson}}, sort: {{sortJson}} };
+          var DEFAULT_VOLUME_PERCENT = {{defaultVolumeJson}};
+          var DEFAULT_SPEED = {{defaultSpeedJson}};
+          var AUTOPLAY_COUNTDOWN_SECONDS = {{autoplayCountdownJson}};
           function watchUrl(index) { return '/watch?v=' + index + '&sort=' + meta.sort; }
           function watchUrlForPath(path) { return '/watch?path=' + encodeURIComponent(path) + '&sort=' + meta.sort; }
           var ICON_PLAY = '{{Svg(Icons.PlayArrow)}}';
@@ -847,17 +869,15 @@ public sealed class VideoStreamingService : IDisposable
             if (video.paused) { video.play().catch(function () {}); } else { video.pause(); }
           }
 
-          // 還原上次的音量/播放速度(整台伺服器共用,不分影片)。
+          // 音量/播放速度:優先還原這個瀏覽器上次自己調過的值(整台伺服器共用,不分影片),
+          // 第一次觀看(還沒有 localStorage 紀錄)則套用主機端設定的預設值。
           var savedVol = localStorage.getItem(volKey);
-          if (savedVol !== null) {
-            video.volume = Math.min(1, Math.max(0, parseFloat(savedVol)));
-            volume.value = String(Math.round(video.volume * 100));
-          }
+          video.volume = Math.min(1, Math.max(0, (savedVol !== null ? parseFloat(savedVol) : DEFAULT_VOLUME_PERCENT / 100)));
+          volume.value = String(Math.round(video.volume * 100));
+
           var savedSpeed = localStorage.getItem(speedKey);
-          if (savedSpeed !== null) {
-            video.playbackRate = parseFloat(savedSpeed);
-            speed.value = savedSpeed;
-          }
+          video.playbackRate = savedSpeed !== null ? parseFloat(savedSpeed) : DEFAULT_SPEED;
+          speed.value = String(video.playbackRate);
           updateMuteIcon();
 
           video.addEventListener('loadedmetadata', function () {
@@ -886,7 +906,7 @@ public sealed class VideoStreamingService : IDisposable
             localStorage.removeItem(posKey);
             if (meta.nextIndex === null || !autoplayNext.checked) { return; }
 
-            var secondsLeft = 5;
+            var secondsLeft = AUTOPLAY_COUNTDOWN_SECONDS;
             nextOverlay.hidden = false;
             nextOverlayText.textContent = '即將播放下一部…(' + secondsLeft + ')';
             autoplayTimer = setInterval(function () {

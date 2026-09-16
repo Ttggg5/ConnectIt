@@ -596,6 +596,70 @@
                                       Content="開機時自動啟動" Checked="AutoStartCheckBox_Changed" Unchecked="AutoStartCheckBox_Changed"/>
                         </StackPanel>
                     </materialDesign:Card>
+
+                    <materialDesign:Card x:Name="VideoServerSettingsCard" Padding="16" Margin="0,0,0,16">
+                        <StackPanel>
+                            <TextBlock Text="影片伺服器" FontWeight="Medium" FontSize="15"/>
+                            <TextBlock Text="下次開始分享影片時套用的預設值:清單排序方式、播放器初始行為,以及掃描資料夾時額外要當作影片的副檔名。"
+                                       Opacity="0.6" FontSize="12" Margin="0,4,0,16" TextWrapping="Wrap"/>
+
+                            <TextBlock Text="預設排序方式" FontSize="12" Opacity="0.7" Margin="0,0,0,4"/>
+                            <ComboBox x:Name="VideoDefaultSortComboBox" AutomationProperties.AutomationId="VideoDefaultSortComboBox"
+                                      Width="220" HorizontalAlignment="Left" Margin="0,0,0,16"
+                                      SelectionChanged="VideoDefaultSortComboBox_SelectionChanged">
+                                <ComboBoxItem Tag="name_asc" Content="檔名(A→Z)"/>
+                                <ComboBoxItem Tag="name_desc" Content="檔名(Z→A)"/>
+                                <ComboBoxItem Tag="size_asc" Content="檔案大小(小→大)"/>
+                                <ComboBoxItem Tag="size_desc" Content="檔案大小(大→小)"/>
+                                <ComboBoxItem Tag="date_desc" Content="修改時間(新→舊)"/>
+                                <ComboBoxItem Tag="date_asc" Content="修改時間(舊→新)"/>
+                            </ComboBox>
+
+                            <CheckBox x:Name="VideoAutoplayNextCheckBox" AutomationProperties.AutomationId="VideoAutoplayNextCheckBox"
+                                      Content="預設自動播放下一部" Margin="0,0,0,16"
+                                      Checked="VideoAutoplayNextCheckBox_Changed" Unchecked="VideoAutoplayNextCheckBox_Changed"/>
+
+                            <TextBlock Text="自動播放倒數秒數" FontSize="12" Opacity="0.7" Margin="0,0,0,4"/>
+                            <TextBox x:Name="VideoAutoplayCountdownTextBox" AutomationProperties.AutomationId="VideoAutoplayCountdownTextBox"
+                                     materialDesign:HintAssist.Hint="倒數秒數"
+                                     Style="{StaticResource MaterialDesignOutlinedTextBox}"
+                                     Width="120" HorizontalAlignment="Left" Margin="0,0,0,16"
+                                     PreviewTextInput="VideoAutoplayCountdownTextBox_PreviewTextInput"
+                                     KeyDown="VideoAutoplayCountdownTextBox_KeyDown"
+                                     LostFocus="VideoAutoplayCountdownTextBox_LostFocus"/>
+
+                            <TextBlock Text="預設音量" FontSize="12" Opacity="0.7" Margin="0,0,0,4"/>
+                            <Grid Margin="0,0,0,16">
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="220"/>
+                                    <ColumnDefinition Width="Auto"/>
+                                </Grid.ColumnDefinitions>
+                                <Slider x:Name="VideoDefaultVolumeSlider" AutomationProperties.AutomationId="VideoDefaultVolumeSlider"
+                                        Grid.Column="0" Minimum="0" Maximum="100" TickFrequency="1" IsSnapToTickEnabled="True"
+                                        VerticalAlignment="Center" Margin="0,0,12,0"
+                                        ValueChanged="VideoDefaultVolumeSlider_ValueChanged"/>
+                                <TextBlock x:Name="VideoDefaultVolumeText" Grid.Column="1" VerticalAlignment="Center" Width="40"/>
+                            </Grid>
+
+                            <TextBlock Text="預設播放速度" FontSize="12" Opacity="0.7" Margin="0,0,0,4"/>
+                            <ComboBox x:Name="VideoDefaultSpeedComboBox" AutomationProperties.AutomationId="VideoDefaultSpeedComboBox"
+                                      Width="160" HorizontalAlignment="Left" Margin="0,0,0,16"
+                                      SelectionChanged="VideoDefaultSpeedComboBox_SelectionChanged">
+                                <ComboBoxItem Tag="0.5" Content="0.5x"/>
+                                <ComboBoxItem Tag="1" Content="1x"/>
+                                <ComboBoxItem Tag="1.25" Content="1.25x"/>
+                                <ComboBoxItem Tag="1.5" Content="1.5x"/>
+                                <ComboBoxItem Tag="2" Content="2x"/>
+                            </ComboBox>
+
+                            <TextBlock Text="額外支援的副檔名" FontSize="12" Opacity="0.7" Margin="0,0,0,4"/>
+                            <TextBox x:Name="VideoExtraExtensionsTextBox" AutomationProperties.AutomationId="VideoExtraExtensionsTextBox"
+                                     materialDesign:HintAssist.Hint="以逗號分隔,例如 .ogv, .3gp"
+                                     Style="{StaticResource MaterialDesignOutlinedTextBox}"
+                                     HorizontalAlignment="Stretch"
+                                     LostFocus="VideoExtraExtensionsTextBox_LostFocus"/>
+                        </StackPanel>
+                    </materialDesign:Card>
                     </Grid>
                 </StackPanel>
                 </ScrollViewer>

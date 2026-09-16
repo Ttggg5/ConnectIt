@@ -14,19 +14,28 @@ public static class VideoLibraryScanner
         ".mp4", ".mkv", ".avi", ".mov", ".wmv", ".flv", ".webm", ".m4v", ".ts", ".mpg", ".mpeg",
     ];
 
-    public static bool IsVideoFile(string path) =>
-        VideoExtensions.Contains(Path.GetExtension(path), StringComparer.OrdinalIgnoreCase);
+    /// <summary>[extraExtensions] 使用者在設定頁額外加入、內建清單以外的副檔名(見
+    /// <see cref="VideoServerSettingsService.ExtraExtensions"/>),掃描資料夾時一併視為影片。</summary>
+    public static bool IsVideoFile(string path, IReadOnlyCollection<string>? extraExtensions = null)
+    {
+        var extension = Path.GetExtension(path);
+        return VideoExtensions.Contains(extension, StringComparer.OrdinalIgnoreCase)
+            || (extraExtensions != null && extraExtensions.Contains(extension, StringComparer.OrdinalIgnoreCase));
+    }
 
     /// <summary>
     /// 掃描 <paramref name="path"/>(可以是單一檔案或資料夾),回傳 manifest 項目清單,
     /// 以及一份「RelativePath -> 完整路徑」的查找字典(伺服器實際讀檔時唯一信任的來源,
     /// 不會用請求端傳來的字串做路徑組合,天然避免路徑穿越問題)。
     /// </summary>
-    public static (IReadOnlyList<VideoManifestEntry> Manifest, IReadOnlyDictionary<string, string> FilesByRelativePath) BuildManifest(string path)
+    public static (IReadOnlyList<VideoManifestEntry> Manifest, IReadOnlyDictionary<string, string> FilesByRelativePath) BuildManifest(
+        string path, IReadOnlyCollection<string>? extraExtensions = null)
     {
+        // 單一檔案是使用者從「選擇要分享的影片」對話框直接點出來的,不用再過濾副檔名——
+        // 副檔名白名單只用來決定「掃描資料夾時哪些檔案算影片」。
         var files = new FileInfo(path).Exists
             ? BuildSingleFileEntries(path)
-            : BuildFolderEntries(path);
+            : BuildFolderEntries(path, extraExtensions);
 
         // 依相對路徑排序,讓首頁清單順序穩定,同時也讓「上一部/下一部」照著這個順序前進有意義。
         files = files.OrderBy(f => f.RelativePath, StringComparer.OrdinalIgnoreCase).ToList();
@@ -49,11 +58,12 @@ public static class VideoLibraryScanner
         return [(info.FullName, info.Name, info.Length, info.LastWriteTimeUtc)];
     }
 
-    private static List<(string FullPath, string RelativePath, long Size, DateTime Modified)> BuildFolderEntries(string folderPath)
+    private static List<(string FullPath, string RelativePath, long Size, DateTime Modified)> BuildFolderEntries(
+        string folderPath, IReadOnlyCollection<string>? extraExtensions)
     {
         var root = new DirectoryInfo(folderPath).FullName;
         return Directory.EnumerateFiles(root, "*", SearchOption.AllDirectories)
-            .Where(IsVideoFile)
+            .Where(f => IsVideoFile(f, extraExtensions))
             .Select(fullPath =>
             {
                 var info = new FileInfo(fullPath);

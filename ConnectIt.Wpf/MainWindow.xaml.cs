@@ -39,6 +39,7 @@ public partial class MainWindow : Window
     // 提供的網頁(首頁清單 + 觀看頁,見 VideoStreamingService),不需要 App 自己實作播放器/清單畫面。
     private readonly MdnsDiscoveryService _videoDiscovery = new("_connectit-video._tcp");
     private readonly VideoStreamingService _videoStreaming = new();
+    private readonly VideoServerSettingsService _videoServerSettings = new();
     private readonly ObservableCollection<DiscoveredDevice> _videoServers = new();
 
     private DiscoveredDevice? _activeVideoServer;
@@ -108,6 +109,14 @@ public partial class MainWindow : Window
         PreferredPortTextBox.Text = _connectionSettings.PreferredPort == 0 ? string.Empty : _connectionSettings.PreferredPort.ToString();
         ConnectTimeoutTextBox.Text = _connectionSettings.ConnectTimeoutSeconds.ToString();
         RefreshTrustedDevicesList();
+
+        SelectComboBoxItemByTag(VideoDefaultSortComboBox, _videoServerSettings.DefaultSort);
+        VideoAutoplayNextCheckBox.IsChecked = _videoServerSettings.AutoplayNext;
+        VideoAutoplayCountdownTextBox.Text = _videoServerSettings.AutoplayCountdownSeconds.ToString();
+        VideoDefaultVolumeSlider.Value = _videoServerSettings.DefaultVolume;
+        VideoDefaultVolumeText.Text = $"{_videoServerSettings.DefaultVolume}%";
+        SelectComboBoxItemByTag(VideoDefaultSpeedComboBox, _videoServerSettings.DefaultSpeed.ToString(System.Globalization.CultureInfo.InvariantCulture));
+        VideoExtraExtensionsTextBox.Text = string.Join(", ", _videoServerSettings.ExtraExtensions);
 
         NavListBox.SelectedIndex = 0;
 
@@ -273,7 +282,7 @@ public partial class MainWindow : Window
     {
         _settingsCards ??=
         [
-            ThemeCard, SearchDurationCard, DownloadFolderCard, ConnectionCard,
+            ThemeCard, SearchDurationCard, DownloadFolderCard, ConnectionCard, VideoServerSettingsCard,
             NotificationCard, AutoStartCard, TrustedDevicesCard,
         ];
 
@@ -301,7 +310,7 @@ public partial class MainWindow : Window
         for (var i = 0; i < columnCount; i++)
         {
             SettingsCardsHost.ColumnDefinitions.Add(new ColumnDefinition());
-            var column = new StackPanel { Margin = new Thickness(i == 0 ? 0 : SettingsCardGap, 0, 0, 0) };
+            var column = new StackPanel { Margin = new Thickness(i == 0 ? 0 : SettingsCardGap, 0, i == columnCount - 1 ? SettingsCardGap: 0, 0) };
             Grid.SetColumn(column, i);
             columns[i] = column;
         }
@@ -1013,9 +1022,10 @@ public partial class MainWindow : Window
         }
     }
 
-    private static string BuildVideoFileFilter()
+    private string BuildVideoFileFilter()
     {
-        var extensions = string.Join(';', VideoLibraryScanner.VideoExtensions.Select(ext => $"*{ext}"));
+        var extensions = string.Join(
+            ';', VideoLibraryScanner.VideoExtensions.Concat(_videoServerSettings.ExtraExtensions).Select(ext => $"*{ext}"));
         return $"影片檔案|{extensions}";
     }
 
@@ -1025,7 +1035,16 @@ public partial class MainWindow : Window
             ? Environment.MachineName
             : DeviceNameTextBox.Text.Trim();
 
-        _videoStreaming.Start(path, name);
+        var options = new VideoServerPlaybackOptions
+        {
+            DefaultSort = _videoServerSettings.DefaultSort,
+            AutoplayNext = _videoServerSettings.AutoplayNext,
+            DefaultVolumePercent = _videoServerSettings.DefaultVolume,
+            DefaultSpeed = _videoServerSettings.DefaultSpeed,
+            AutoplayCountdownSeconds = _videoServerSettings.AutoplayCountdownSeconds,
+            ExtraExtensions = _videoServerSettings.ExtraExtensions,
+        };
+        _videoStreaming.Start(path, name, options);
         if (!_videoStreaming.IsRunning)
         {
             return;
@@ -1049,6 +1068,79 @@ public partial class MainWindow : Window
         _remoteDurationProbedForPath = null;
         RemoteControlTimelineSlider.IsEnabled = false;
         RemoteControlTimelineSlider.Value = 0;
+    }
+
+    // ===================== 影片伺服器自訂選項(設定頁) =====================
+
+    private static void SelectComboBoxItemByTag(ComboBox comboBox, string tag)
+    {
+        comboBox.SelectedItem = comboBox.Items.OfType<ComboBoxItem>().FirstOrDefault(item => Equals(item.Tag, tag))
+            ?? comboBox.Items.OfType<ComboBoxItem>().FirstOrDefault();
+    }
+
+    private void VideoDefaultSortComboBox_SelectionChanged(object sender, SelectionChangedEventArgs e)
+    {
+        if (VideoDefaultSortComboBox.SelectedItem is ComboBoxItem { Tag: string tag })
+        {
+            _videoServerSettings.SetDefaultSort(tag);
+        }
+    }
+
+    private void VideoAutoplayNextCheckBox_Changed(object sender, RoutedEventArgs e)
+    {
+        _videoServerSettings.SetAutoplayNext(VideoAutoplayNextCheckBox.IsChecked == true);
+    }
+
+    private void VideoAutoplayCountdownTextBox_PreviewTextInput(object sender, TextCompositionEventArgs e)
+    {
+        e.Handled = !e.Text.All(char.IsDigit);
+    }
+
+    private void VideoAutoplayCountdownTextBox_KeyDown(object sender, KeyEventArgs e)
+    {
+        if (e.Key == Key.Enter)
+        {
+            ApplyVideoAutoplayCountdown();
+            Keyboard_ClearFocus();
+        }
+    }
+
+    private void VideoAutoplayCountdownTextBox_LostFocus(object sender, RoutedEventArgs e) => ApplyVideoAutoplayCountdown();
+
+    /// <summary>套用自動播放下一部的倒數秒數,超出合理範圍會被夾住,並把夾住後的值顯示回輸入框。</summary>
+    private void ApplyVideoAutoplayCountdown()
+    {
+        if (!int.TryParse(VideoAutoplayCountdownTextBox.Text, out var seconds))
+        {
+            seconds = VideoServerSettingsService.DefaultAutoplayCountdownSeconds;
+        }
+
+        VideoAutoplayCountdownTextBox.Text = _videoServerSettings.SetAutoplayCountdownSeconds(seconds).ToString();
+    }
+
+    private void VideoDefaultVolumeSlider_ValueChanged(object sender, RoutedPropertyChangedEventArgs<double> e)
+    {
+        VideoDefaultVolumeText.Text = $"{(int)e.NewValue}%";
+
+        // 拖曳中每個 tick 都會觸發這個事件,跟其他文字輸入框「LostFocus 才套用」不同——
+        // 滑桿沒有「失焦」這種自然的「使用者確定好了」時機,所以就直接即時儲存,
+        // 反正 SetDefaultVolume 內部本來就只有值真的變了才寫檔。
+        _videoServerSettings.SetDefaultVolume((int)e.NewValue);
+    }
+
+    private void VideoDefaultSpeedComboBox_SelectionChanged(object sender, SelectionChangedEventArgs e)
+    {
+        if (VideoDefaultSpeedComboBox.SelectedItem is ComboBoxItem { Tag: string tag } &&
+            double.TryParse(tag, System.Globalization.CultureInfo.InvariantCulture, out var speed))
+        {
+            _videoServerSettings.SetDefaultSpeed(speed);
+        }
+    }
+
+    private void VideoExtraExtensionsTextBox_LostFocus(object sender, RoutedEventArgs e)
+    {
+        var applied = _videoServerSettings.SetExtraExtensions(VideoExtraExtensionsTextBox.Text);
+        VideoExtraExtensionsTextBox.Text = string.Join(", ", applied);
     }
 
     private void StopVideoServerButton_Click(object sender, RoutedEventArgs e)
