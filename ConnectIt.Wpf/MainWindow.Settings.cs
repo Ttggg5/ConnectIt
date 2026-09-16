@@ -241,6 +241,11 @@ public partial class MainWindow
         _videoServerSettings.SetAutoplayNext(VideoAutoplayNextCheckBox.IsChecked == true);
     }
 
+    private void VideoShuffleCheckBox_Changed(object sender, RoutedEventArgs e)
+    {
+        _videoServerSettings.SetShuffle(VideoShuffleCheckBox.IsChecked == true);
+    }
+
     private void VideoAutoplayCountdownTextBox_PreviewTextInput(object sender, TextCompositionEventArgs e)
     {
         e.Handled = !e.Text.All(char.IsDigit);

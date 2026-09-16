@@ -10,6 +10,7 @@ public sealed class VideoServerSettingsService
 {
     public const string DefaultSortValue = "name_asc";
     public const bool DefaultAutoplayNext = true;
+    public const bool DefaultShuffle = false;
     public const int DefaultVolumePercent = 100;
     public const double DefaultPlaybackSpeed = 1;
     public const int DefaultAutoplayCountdownSeconds = 5;
@@ -28,6 +29,8 @@ public sealed class VideoServerSettingsService
     public string DefaultSort { get; private set; } = DefaultSortValue;
 
     public bool AutoplayNext { get; private set; } = DefaultAutoplayNext;
+
+    public bool Shuffle { get; private set; } = DefaultShuffle;
 
     public int DefaultVolume { get; private set; } = DefaultVolumePercent;
 
@@ -62,6 +65,15 @@ public sealed class VideoServerSettingsService
         if (enabled != AutoplayNext)
         {
             AutoplayNext = enabled;
+            Save();
+        }
+    }
+
+    public void SetShuffle(bool enabled)
+    {
+        if (enabled != Shuffle)
+        {
+            Shuffle = enabled;
             Save();
         }
     }
@@ -147,6 +159,7 @@ public sealed class VideoServerSettingsService
                 {
                     DefaultSort = ValidSortOptions.Contains(data.DefaultSort) ? data.DefaultSort : DefaultSortValue;
                     AutoplayNext = data.AutoplayNext;
+                    Shuffle = data.Shuffle;
                     DefaultVolume = Math.Clamp(data.DefaultVolume, 0, 100);
                     DefaultSpeed = ValidPlaybackSpeeds.Contains(data.DefaultSpeed) ? data.DefaultSpeed : DefaultPlaybackSpeed;
                     AutoplayCountdownSeconds = Math.Clamp(
@@ -169,6 +182,7 @@ public sealed class VideoServerSettingsService
             {
                 DefaultSort = DefaultSort,
                 AutoplayNext = AutoplayNext,
+                Shuffle = Shuffle,
                 DefaultVolume = DefaultVolume,
                 DefaultSpeed = DefaultSpeed,
                 AutoplayCountdownSeconds = AutoplayCountdownSeconds,
@@ -187,6 +201,8 @@ public sealed class VideoServerSettingsService
         public string DefaultSort { get; set; } = DefaultSortValue;
 
         public bool AutoplayNext { get; set; } = DefaultAutoplayNext;
+
+        public bool Shuffle { get; set; } = DefaultShuffle;
 
         public int DefaultVolume { get; set; } = DefaultVolumePercent;
 

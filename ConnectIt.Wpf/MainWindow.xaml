@@ -619,6 +619,10 @@
                                       Content="預設自動播放下一部" Margin="0,0,0,16"
                                       Checked="VideoAutoplayNextCheckBox_Changed" Unchecked="VideoAutoplayNextCheckBox_Changed"/>
 
+                            <CheckBox x:Name="VideoShuffleCheckBox" AutomationProperties.AutomationId="VideoShuffleCheckBox"
+                                      Content="預設隨機播放" Margin="0,0,0,16"
+                                      Checked="VideoShuffleCheckBox_Changed" Unchecked="VideoShuffleCheckBox_Changed"/>
+
                             <TextBlock Text="自動播放倒數秒數" FontSize="12" Opacity="0.7" Margin="0,0,0,4"/>
                             <TextBox x:Name="VideoAutoplayCountdownTextBox" AutomationProperties.AutomationId="VideoAutoplayCountdownTextBox"
                                      materialDesign:HintAssist.Hint="倒數秒數"

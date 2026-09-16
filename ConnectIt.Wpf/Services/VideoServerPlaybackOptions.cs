@@ -10,6 +10,8 @@ public sealed record VideoServerPlaybackOptions
 
     public bool AutoplayNext { get; init; } = VideoServerSettingsService.DefaultAutoplayNext;
 
+    public bool Shuffle { get; init; } = VideoServerSettingsService.DefaultShuffle;
+
     public int DefaultVolumePercent { get; init; } = VideoServerSettingsService.DefaultVolumePercent;
 
     public double DefaultSpeed { get; init; } = VideoServerSettingsService.DefaultPlaybackSpeed;

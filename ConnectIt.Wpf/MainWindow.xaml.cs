@@ -80,6 +80,7 @@ public partial class MainWindow : Window
 
         SelectComboBoxItemByTag(VideoDefaultSortComboBox, _videoServerSettings.DefaultSort);
         VideoAutoplayNextCheckBox.IsChecked = _videoServerSettings.AutoplayNext;
+        VideoShuffleCheckBox.IsChecked = _videoServerSettings.Shuffle;
         VideoAutoplayCountdownTextBox.Text = _videoServerSettings.AutoplayCountdownSeconds.ToString();
         VideoDefaultVolumeSlider.Value = _videoServerSettings.DefaultVolume;
         VideoDefaultVolumeText.Text = $"{_videoServerSettings.DefaultVolume}%";
