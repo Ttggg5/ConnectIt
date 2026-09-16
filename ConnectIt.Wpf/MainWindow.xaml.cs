@@ -248,6 +248,82 @@ public partial class MainWindow : Window
         VideoWebsite,
     }
 
+    private void NavColorZone_SizeChanged(object sender, SizeChangedEventArgs e)
+    {
+        var colorZone = (FrameworkElement)sender;
+        colorZone.Clip = new RectangleGeometry(new Rect(0, 0, colorZone.ActualWidth, colorZone.ActualHeight), 10, 10);
+    }
+
+    // 設定頁卡片的「砌磚式」排版:欄數依可用寬度動態決定,每張卡片依目前最短的一欄放入,
+    // 讓同一欄裡的卡片緊接排列、不會因為隔壁欄比較高而留白。
+    private const double SettingsCardWidth = 320;
+    private const double SettingsCardGap = 16;
+    private FrameworkElement[]? _settingsCards;
+    private int _settingsCardColumnCount = -1;
+
+    private void SettingsViewRoot_SizeChanged(object sender, SizeChangedEventArgs e)
+    {
+        if (e.NewSize.Width != e.PreviousSize.Width)
+        {
+            ArrangeSettingsCards();
+        }
+    }
+
+    private void ArrangeSettingsCards()
+    {
+        _settingsCards ??=
+        [
+            ThemeCard, SearchDurationCard, DownloadFolderCard, ConnectionCard,
+            NotificationCard, AutoStartCard, TrustedDevicesCard,
+        ];
+
+        // SettingsViewRoot 是根視窗 Grid 裡明確的 Star 欄,寬度一定等於實際可用內容寬度;
+        // 不依賴內層 ScrollViewer/StackPanel/Grid 的量測結果(那條鏈路在沒有明確 Width 時
+        // 會退化成「依內容縮小」,導致卡片區永遠量到一個很窄的寬度)。
+        var availableWidth = SettingsViewRoot.ActualWidth - SystemParameters.VerticalScrollBarWidth;
+        if (availableWidth <= 0)
+        {
+            return;
+        }
+
+        SettingsCardsHost.Width = availableWidth;
+
+        var columnCount = Math.Max(1, (int)((availableWidth + SettingsCardGap) / (SettingsCardWidth + SettingsCardGap)));
+        if (columnCount == _settingsCardColumnCount)
+        {
+            return;
+        }
+
+        _settingsCardColumnCount = columnCount;
+
+        SettingsCardsHost.ColumnDefinitions.Clear();
+        var columns = new StackPanel[columnCount];
+        for (var i = 0; i < columnCount; i++)
+        {
+            SettingsCardsHost.ColumnDefinitions.Add(new ColumnDefinition());
+            var column = new StackPanel { Margin = new Thickness(i == 0 ? 0 : SettingsCardGap, 0, 0, 0) };
+            Grid.SetColumn(column, i);
+            columns[i] = column;
+        }
+
+        var columnWidth = (availableWidth - (SettingsCardGap * (columnCount - 1))) / columnCount;
+        var columnHeights = new double[columnCount];
+        SettingsCardsHost.Children.Clear();
+        foreach (var card in _settingsCards)
+        {
+            card.Measure(new Size(columnWidth, double.PositiveInfinity));
+            var shortestColumn = Array.IndexOf(columnHeights, columnHeights.Min());
+            (card.Parent as Panel)?.Children.Remove(card);
+            columns[shortestColumn].Children.Add(card);
+            columnHeights[shortestColumn] += card.DesiredSize.Height + SettingsCardGap;
+        }
+
+        foreach (var column in columns)
+        {
+            SettingsCardsHost.Children.Add(column);
+        }
+    }
+
     private void NavListBox_SelectionChanged(object sender, SelectionChangedEventArgs e)
     {
         SetActivePage(NavListBox.SelectedIndex switch
@@ -279,6 +355,8 @@ public partial class MainWindow : Window
         {
             case AppPage.Settings:
                 SettingsViewRoot.Visibility = Visibility.Visible;
+                _settingsCardColumnCount = -1;
+                Dispatcher.InvokeAsync(ArrangeSettingsCards, DispatcherPriority.Loaded);
                 break;
             case AppPage.Video:
                 VideoViewRoot.Visibility = Visibility.Visible;
