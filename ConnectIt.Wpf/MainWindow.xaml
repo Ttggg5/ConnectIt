@@ -10,6 +10,7 @@
         Title="ConnectIt" Height="600" Width="840"
         Icon="Assets/AppIcon.ico"
         MinHeight="480" MinWidth="640"
+        WindowStartupLocation="CenterScreen"
         Background="{DynamicResource MaterialDesignPaper}"
         TextElement.Foreground="{DynamicResource MaterialDesignBody}"
         TextElement.FontWeight="Regular"
