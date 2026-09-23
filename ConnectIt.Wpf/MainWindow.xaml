@@ -84,7 +84,7 @@
                                               Background="{DynamicResource MaterialDesign.Brush.Primary.Light}"
                                               Foreground="white">
                             <materialDesign:Chip.Icon>
-                                <materialDesign:PackIcon Kind="Wifi"/>
+                                <materialDesign:PackIcon Kind="Wifi" Foreground="White"/>
                             </materialDesign:Chip.Icon>
                         </materialDesign:Chip>
                     </StackPanel>
@@ -277,8 +277,8 @@
                                     Style="{StaticResource MaterialDesignRaisedButton}"
                                     Height="Auto" Padding="20,10" Margin="0,0,12,0" Click="StreamVideoButton_Click">
                                 <StackPanel Orientation="Horizontal">
-                                    <materialDesign:PackIcon Kind="PlayCircleOutline" Margin="0,0,8,0"/>
-                                    <TextBlock Text="分享單一影片"/>
+                                    <materialDesign:PackIcon Kind="PlayCircleOutline" Margin="0,0,8,0" Foreground="White"/>
+                                    <TextBlock Text="分享單一影片" Foreground="White"/>
                                 </StackPanel>
                             </Button>
                             <Button x:Name="ShareVideoFolderButton" AutomationProperties.AutomationId="ShareVideoFolderButton"
