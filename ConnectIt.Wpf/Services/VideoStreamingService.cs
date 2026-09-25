@@ -48,7 +48,8 @@ public sealed class VideoStreamingService : IDisposable
     public IReadOnlyList<VideoManifestEntry> Manifest { get; private set; } = [];
 
     /// <summary>遠端控制模式的播放狀態——主機端遙控面板直接呼叫這裡的方法下指令(同一個 process,
-    /// 不用透過網路),觀眾端則透過 <c>GET /control/state</c> 輪詢讀取。</summary>
+    /// 不用透過網路),觀眾端則透過 <c>GET /control/events</c> 接收主機推送(舊版觀眾端仍可輪詢
+    /// <c>GET /control/state</c>)。</summary>
     public PlaybackControlState ControlState { get; } = new();
 
     /// <summary>開始分享。<paramref name="path"/> 可以是單一影片檔案,也可以是裝滿影片的資料夾
@@ -354,6 +355,12 @@ public sealed class VideoStreamingService : IDisposable
             return;
         }
 
+        if (path.Equals("/control/events", StringComparison.OrdinalIgnoreCase))
+        {
+            await WriteControlEventsAsync(stream, token).ConfigureAwait(false);
+            return;
+        }
+
         const string mediaPrefix = "/media/";
         if (path.StartsWith(mediaPrefix, StringComparison.OrdinalIgnoreCase))
         {
@@ -647,7 +654,7 @@ public sealed class VideoStreamingService : IDisposable
         """;
 
     /// <summary>遠端控制模式已開啟、但主機還沒選任何影片時顯示——不能讓觀眾自己從首頁清單挑,
-    /// 只能等主機選好,這裡定期輪詢 <c>/control/state</c>,一有影片就自動跳轉過去。</summary>
+    /// 只能等主機選好,這裡訂閱主機推送的 <c>/control/events</c>,主機一選片就自動跳轉過去。</summary>
     private string BuildRemoteWaitingPageHtml()
     {
         var title = HtmlEncode(_serverName);
@@ -660,12 +667,11 @@ public sealed class VideoStreamingService : IDisposable
             <body>
               <main class="waiting-page"><p>遙控模式已開啟,等待主機選擇影片…</p></main>
               <script>
-                setInterval(function () {
-                  fetch('/control/state').then(function (r) { return r.json(); }).then(function (state) {
-                    if (!state || !state.Enabled) { location.href = '/'; return; }
-                    if (state.VideoRelativePath) { location.href = '/watch?path=' + encodeURIComponent(state.VideoRelativePath); }
-                  }).catch(function () {});
-                }, 800);
+                {{RemoteEventsScript}}
+                subscribeRemoteState(function (state) {
+                  if (!state || !state.Enabled) { location.href = '/'; return; }
+                  if (state.VideoRelativePath) { location.href = '/watch?path=' + encodeURIComponent(state.VideoRelativePath); }
+                });
               </script>
             </body>
             </html>
@@ -1203,8 +1209,7 @@ public sealed class VideoStreamingService : IDisposable
             else if (e.key === 'm' || e.key === 'M') { muteBtn.click(); }
           });
 
-          // ===== 遠端控制模式:主機正在控制播放時,鎖住手動控制列,改成跟隨輪詢到的狀態播放 =====
-          var REMOTE_POLL_MS = 800;
+          // ===== 遠端控制模式:主機正在控制播放時,鎖住手動控制列,改成跟隨主機推送的狀態播放 =====
           var REMOTE_DRIFT_THRESHOLD_SEC = 1.5;
           var REMOTE_RESYNC_COOLDOWN_MS = 1000;
           var remoteEnabled = false;
@@ -1225,7 +1230,7 @@ public sealed class VideoStreamingService : IDisposable
               remoteEnabled = true;
               playerWrap.classList.add('remote-controlled');
               document.body.classList.add('remote-fullscreen');
-              // 這裡是輪詢回應後才觸發,不是使用者直接點擊觸發,不算瀏覽器要求的「使用者手勢」,
+              // 這裡是收到推送後才觸發,不是使用者直接點擊觸發,不算瀏覽器要求的「使用者手勢」,
               // 原生全螢幕 API 很可能會被擋下來——失敗就靠上面的 remote-fullscreen CSS 頂著,
               // 不需要特別處理這個 rejection。
               if (!document.fullscreenElement) { fullscreenWrap.requestFullscreen().catch(function () {}); }
@@ -1254,10 +1259,38 @@ public sealed class VideoStreamingService : IDisposable
           }
 
           applyRemoteState({{controlStateJson}});
-          setInterval(function () {
-            fetch('/control/state').then(function (r) { return r.json(); }).then(applyRemoteState).catch(function () {});
-          }, REMOTE_POLL_MS);
+          {{RemoteEventsScript}}
+          subscribeRemoteState(applyRemoteState);
         })();
+        """;
+
+    /// <summary>
+    /// 等待頁、觀看頁共用的 <c>/control/events</c> 訂閱函式(跟 Android 端 VideoHostPages.kt 的
+    /// REMOTE_EVENTS_SCRIPT 同一份):主機一有狀態變更就推送過來,不用每隔一段時間輪詢。
+    ///
+    /// 瀏覽器的 EventSource 遇到網路錯誤會自己重連,但如果主機直接從網路上消失(沒有正常關閉連線),
+    /// 連線可能就一直卡著收不到東西——主機沒有變更時也會每 5 秒送一次心跳狀態,這裡超過 15 秒都沒
+    /// 收到任何事件就視為連線已經死掉,主動重新連線。
+    /// </summary>
+    private const string RemoteEventsScript = """
+        function subscribeRemoteState(onState) {
+          var STALE_MS = 15000;
+          var source = null;
+          var lastEventAt = Date.now();
+          function connect() {
+            if (source) { source.close(); }
+            lastEventAt = Date.now();
+            source = new EventSource('/control/events');
+            source.onmessage = function (e) {
+              lastEventAt = Date.now();
+              var state;
+              try { state = JSON.parse(e.data); } catch (err) { return; }
+              onState(state);
+            };
+          }
+          connect();
+          setInterval(function () { if (Date.now() - lastEventAt > STALE_MS) { connect(); } }, 5000);
+        }
         """;
 
     private static string HtmlEncode(string value) => WebUtility.HtmlEncode(value);
@@ -1333,6 +1366,36 @@ public sealed class VideoStreamingService : IDisposable
             stream, 200, "OK",
             [("Content-Type", "application/json"), ("Content-Length", payload.Length.ToString())], token).ConfigureAwait(false);
         await stream.WriteAsync(payload, token).ConfigureAwait(false);
+    }
+
+    private static readonly TimeSpan ControlEventsHeartbeat = TimeSpan.FromSeconds(5);
+    private const int ControlEventsRetryMs = 1000;
+
+    /// <summary>
+    /// 遠端控制狀態的推送端點(Server-Sent Events,跟 Android 端 VideoHostServer.kt 同一套格式):
+    /// 觀眾端只連一次、連線一直開著,主機這邊一有狀態變更(播放/暫停/拖曳進度/換片…)就立刻把新的
+    /// snapshot 以一個 <c>data:</c> 事件推下去,不用觀眾端每隔一段時間打 <c>/control/state</c> 來問。
+    ///
+    /// 沒有變更時每 <see cref="ControlEventsHeartbeat"/> 也會送一次目前狀態當心跳:觀眾端可以拿來
+    /// 校正自己播放器累積的漂移(例如緩衝卡了一下),寫入失敗也代表觀眾已經離開,可以結束這條連線。
+    /// 連線會一直持續到觀眾斷線(寫入丟 IOException)或伺服器 <see cref="Stop"/>(token 被取消)。
+    /// </summary>
+    private async Task WriteControlEventsAsync(NetworkStream stream, CancellationToken token)
+    {
+        await WriteHeadersAsync(
+            stream, 200, "OK",
+            [("Content-Type", "text/event-stream; charset=utf-8"), ("Cache-Control", "no-cache")], token).ConfigureAwait(false);
+        // 瀏覽器 EventSource 斷線後的自動重連間隔。
+        await stream.WriteAsync(Encoding.UTF8.GetBytes($"retry: {ControlEventsRetryMs}\n\n"), token).ConfigureAwait(false);
+
+        while (!token.IsCancellationRequested)
+        {
+            var snapshot = ControlState.Snapshot();
+            var payload = Encoding.UTF8.GetBytes("data: " + JsonSerializer.Serialize(snapshot) + "\n\n");
+            await stream.WriteAsync(payload, token).ConfigureAwait(false);
+
+            await ControlState.WaitForChangeAsync(snapshot.Version, ControlEventsHeartbeat, token).ConfigureAwait(false);
+        }
     }
 
     private async Task WriteThumbnailAsync(NetworkStream stream, string relativePath, CancellationToken token)

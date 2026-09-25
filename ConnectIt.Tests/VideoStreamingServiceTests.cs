@@ -503,6 +503,73 @@ public class VideoStreamingServiceTests : IDisposable
         Assert.True(state.IsPlaying);
     }
 
+    /// <summary>讀出下一個 SSE 事件的 data 內容(略過 retry:/註解這類非 data 欄位)。</summary>
+    private static async Task<PlaybackStateSnapshot> ReadNextControlEventAsync(StreamReader reader, CancellationToken token)
+    {
+        var data = new System.Text.StringBuilder();
+        while (true)
+        {
+            var line = await reader.ReadLineAsync(token) ?? throw new EndOfStreamException();
+            if (line.Length == 0)
+            {
+                if (data.Length > 0)
+                {
+                    return System.Text.Json.JsonSerializer.Deserialize<PlaybackStateSnapshot>(data.ToString())!;
+                }
+
+                continue;
+            }
+
+            if (line.StartsWith("data:", StringComparison.Ordinal))
+            {
+                data.Append(line["data:".Length..].TrimStart(' '));
+            }
+        }
+    }
+
+    [Fact]
+    public async Task GetControlEvents_SendsCurrentStateImmediately()
+    {
+        var filePath = CreateFile("movie.mp4", 100);
+        _service.Start(filePath, "server");
+        _service.ControlState.SetEnabled(true);
+
+        using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(10));
+        using var response = await _client.GetAsync($"{BaseUrl}/control/events", HttpCompletionOption.ResponseHeadersRead, cts.Token);
+
+        Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        Assert.Equal("text/event-stream", response.Content.Headers.ContentType?.MediaType);
+
+        using var reader = new StreamReader(await response.Content.ReadAsStreamAsync(cts.Token));
+        var state = await ReadNextControlEventAsync(reader, cts.Token);
+        Assert.True(state.Enabled);
+    }
+
+    [Fact]
+    public async Task GetControlEvents_PushesHostChangeWithoutWaitingForHeartbeat()
+    {
+        var filePath = CreateFile("movie.mp4", 100);
+        _service.Start(filePath, "server");
+        _service.ControlState.SetEnabled(true);
+
+        using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(10));
+        using var response = await _client.GetAsync($"{BaseUrl}/control/events", HttpCompletionOption.ResponseHeadersRead, cts.Token);
+        using var reader = new StreamReader(await response.Content.ReadAsStreamAsync(cts.Token));
+        var initial = await ReadNextControlEventAsync(reader, cts.Token);
+        Assert.Null(initial.VideoRelativePath);
+
+        var stopwatch = System.Diagnostics.Stopwatch.StartNew();
+        _service.ControlState.SetVideo("movie.mp4", startPositionMs: 42_000, autoplay: false);
+        var pushed = await ReadNextControlEventAsync(reader, cts.Token);
+        stopwatch.Stop();
+
+        Assert.Equal("movie.mp4", pushed.VideoRelativePath);
+        Assert.Equal(42_000, pushed.PositionMs);
+        Assert.False(pushed.IsPlaying);
+        // 心跳間隔是 5 秒;變更要能立刻推過來,不是等到下一次心跳。
+        Assert.True(stopwatch.Elapsed < TimeSpan.FromSeconds(2), $"推送花了 {stopwatch.Elapsed}");
+    }
+
     [Fact]
     public async Task GetManifest_ReflectsRemoteControlEnabledFlag()
     {

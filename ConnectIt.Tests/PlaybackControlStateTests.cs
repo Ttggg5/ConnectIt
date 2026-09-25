@@ -217,4 +217,54 @@ public class PlaybackControlStateTests
         Assert.False(snapshot.IsPlaying);
         Assert.Equal(0, snapshot.PositionMs);
     }
+
+    [Fact]
+    public async Task WaitForChangeAsync_VersionAlreadyDifferent_ReturnsImmediately()
+    {
+        var state = new PlaybackControlState();
+        var knownVersion = state.Snapshot().Version;
+        state.SetEnabled(true);
+
+        var wait = state.WaitForChangeAsync(knownVersion, TimeSpan.FromSeconds(30), CancellationToken.None);
+
+        Assert.True(wait.IsCompletedSuccessfully);
+        await wait;
+    }
+
+    [Fact]
+    public async Task WaitForChangeAsync_CompletesWhenStateChanges()
+    {
+        var state = new PlaybackControlState();
+        var knownVersion = state.Snapshot().Version;
+
+        var wait = state.WaitForChangeAsync(knownVersion, TimeSpan.FromSeconds(30), CancellationToken.None);
+        Assert.False(wait.IsCompleted);
+
+        state.Seek(5_000);
+
+        await wait.WaitAsync(TimeSpan.FromSeconds(5));
+    }
+
+    [Fact]
+    public async Task WaitForChangeAsync_NoChange_ReturnsAfterTimeout()
+    {
+        var state = new PlaybackControlState();
+
+        await state.WaitForChangeAsync(state.Snapshot().Version, TimeSpan.FromMilliseconds(50), CancellationToken.None)
+            .WaitAsync(TimeSpan.FromSeconds(5));
+    }
+
+    [Fact]
+    public async Task WaitForChangeAsync_NoOpSetter_DoesNotWakeWaiters()
+    {
+        var state = new PlaybackControlState();
+        state.SetMuted(true);
+        var knownVersion = state.Snapshot().Version;
+
+        var wait = state.WaitForChangeAsync(knownVersion, TimeSpan.FromSeconds(30), CancellationToken.None);
+        state.SetMuted(true);
+        await Task.Delay(50);
+
+        Assert.False(wait.IsCompleted);
+    }
 }

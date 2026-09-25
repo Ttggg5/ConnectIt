@@ -25,7 +25,8 @@ public sealed class PlaybackStateSnapshot
 /// <summary>
 /// 遠端控制模式的播放狀態,對應 Android 端 video/PlaybackControlState.kt——用「碼表」模型記錄
 /// 上次更新時的位置、當下是否在播放、跟一個 monotonic 時間戳,每次被問到時用經過的時間做外插
-/// 算出「現在」的位置,觀眾端(HTTP 輪詢 `/control/state`)不需要自己處理時鐘校正。
+/// 算出「現在」的位置,觀眾端(主機透過 `/control/events` 推送,或舊版的 `/control/state` 輪詢)
+/// 不需要自己處理時鐘校正。
 ///
 /// 主機端不一定真的在播放影片(遙控器介面可以只是選片/下指令),所以這裡完全不持有/依賴任何
 /// 播放器實例,純粹是一個被動的資料模型,由 <see cref="VideoStreamingService"/> 持有單一實例,
@@ -47,6 +48,11 @@ public sealed class PlaybackControlState
     private bool _muted;
     private long _version;
 
+    // 每次狀態變更就把這個 TCS 完成、換一個新的,讓 /control/events 的推送迴圈可以「等到下一次變更」
+    // (見 WaitForChangeAsync)。RunContinuationsAsynchronously:避免等待者的後續程式碼在呼叫端
+    // (遙控面板 UI 執行緒)持有 _gate 的當下同步執行。
+    private TaskCompletionSource _changed = new(TaskCreationOptions.RunContinuationsAsynchronously);
+
     /// <summary><paramref name="clockMs"/> 預設用 <see cref="Environment.TickCount64"/>(不受系統時間
     /// 校正/時區影響的 monotonic 時鐘),測試時可注入假時鐘。</summary>
     public PlaybackControlState(Func<long>? clockMs = null)
@@ -66,7 +72,7 @@ public sealed class PlaybackControlState
             }
 
             _enabled = enabled;
-            _version++;
+            BumpVersionLocked();
         }
     }
 
@@ -80,7 +86,7 @@ public sealed class PlaybackControlState
             _updatedAt = _clockMs();
             _updatedAtUtcMs = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
             _isPlaying = autoplay;
-            _version++;
+            BumpVersionLocked();
         }
     }
 
@@ -99,7 +105,7 @@ public sealed class PlaybackControlState
             _updatedAt = _clockMs();
             _updatedAtUtcMs = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
             _isPlaying = isPlaying;
-            _version++;
+            BumpVersionLocked();
         }
     }
 
@@ -110,7 +116,7 @@ public sealed class PlaybackControlState
             _positionAtUpdate = Math.Max(0, positionMs);
             _updatedAt = _clockMs();
             _updatedAtUtcMs = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
-            _version++;
+            BumpVersionLocked();
         }
     }
 
@@ -125,7 +131,7 @@ public sealed class PlaybackControlState
             }
 
             _playbackRate = clamped;
-            _version++;
+            BumpVersionLocked();
         }
     }
 
@@ -140,7 +146,7 @@ public sealed class PlaybackControlState
             }
 
             _volume = clamped;
-            _version++;
+            BumpVersionLocked();
         }
     }
 
@@ -154,7 +160,7 @@ public sealed class PlaybackControlState
             }
 
             _muted = muted;
-            _version++;
+            BumpVersionLocked();
         }
     }
 
@@ -172,7 +178,7 @@ public sealed class PlaybackControlState
             _playbackRate = 1.0;
             _volume = 1.0;
             _muted = false;
-            _version++;
+            BumpVersionLocked();
         }
     }
 
@@ -193,6 +199,42 @@ public sealed class PlaybackControlState
                 UpdatedAtUtcMs = _updatedAtUtcMs,
             };
         }
+    }
+
+    /// <summary>
+    /// 等到狀態的 <see cref="PlaybackStateSnapshot.Version"/> 不再是 <paramref name="knownVersion"/>
+    /// (也就是發生了下一次變更),或是經過 <paramref name="timeout"/> 為止,兩種情況都正常回傳。
+    /// 取得 snapshot 之後才發生的變更也不會漏掉:版本已經不同的話會立刻回傳。
+    /// </summary>
+    public async Task WaitForChangeAsync(long knownVersion, TimeSpan timeout, CancellationToken token)
+    {
+        Task changed;
+        lock (_gate)
+        {
+            if (_version != knownVersion)
+            {
+                return;
+            }
+
+            changed = _changed.Task;
+        }
+
+        try
+        {
+            await changed.WaitAsync(timeout, token).ConfigureAwait(false);
+        }
+        catch (TimeoutException)
+        {
+        }
+    }
+
+    /// <summary>呼叫端必須已持有 <see cref="_gate"/>。</summary>
+    private void BumpVersionLocked()
+    {
+        _version++;
+        var previous = _changed;
+        _changed = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        previous.TrySetResult();
     }
 
     /// <summary>呼叫端必須已持有 <see cref="_gate"/>。播放中的話用經過的時間外插目前位置,暫停中就是定住的那個值。</summary>
