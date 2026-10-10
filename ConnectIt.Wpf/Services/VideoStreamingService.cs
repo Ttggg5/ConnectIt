@@ -461,8 +461,8 @@ public sealed class VideoStreamingService : IDisposable
     /// 裡的原始索引,只是走訪順序不同)。首頁清單、觀看頁側邊清單、上一部/下一部都共用同一份排序邏輯。
     /// <paramref name="shuffle"/> 為真時,在排序結果之上用 <paramref name="seed"/> 洗牌一次——同一組
     /// seed 每次重算結果都一樣,讓「隨機播放」這一輪瀏覽過程中上一部/下一部順序穩定、不會每次請求
-    /// 都重新洗一次牌。</summary>
-    private List<int> GetDisplayOrder(string sort, bool shuffle = false, int seed = 0)
+    /// 都重新洗一次牌。主機端遙控面板(MainWindow.RemoteControl.cs)也共用這裡決定清單/上一部/下一部順序。</summary>
+    internal List<int> GetDisplayOrder(string sort, bool shuffle = false, int seed = 0)
     {
         var indices = Enumerable.Range(0, Manifest.Count);
         var ordered = sort switch
@@ -1128,7 +1128,8 @@ public sealed class VideoStreamingService : IDisposable
 
           video.addEventListener('ended', function () {
             localStorage.removeItem(posKey);
-            if (meta.nextIndex === null || !autoplayNext.checked) { return; }
+            // 遠端控制中由主機決定要不要/切到哪一部(主機遙控面板自己的自動播放),觀眾端不自己跳。
+            if (remoteEnabled || meta.nextIndex === null || !autoplayNext.checked) { return; }
 
             var secondsLeft = AUTOPLAY_COUNTDOWN_SECONDS;
             nextOverlay.hidden = false;

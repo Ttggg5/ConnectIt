@@ -24,10 +24,22 @@ public partial class MainWindow
     // 輕量的本機計時器(不是網路輪詢,跟觀眾端打 `/control/state` 不同)定期重畫。
     private readonly DispatcherTimer _remoteControlPollTimer = new() { Interval = TimeSpan.FromMilliseconds(500) };
 
+    // 隨機播放的洗牌種子:跟觀看頁網址帶的 seed 同一個道理,同一輪隨機播放期間清單/上一部/下一部
+    // 順序要固定,只有重新勾選「隨機播放」或重新開始分享時才換一組。
+    private int _remoteShuffleSeed;
+
+    // 自動播放下一部:主機端不一定真的在播放影片,所以「播完了」是用碼表外插的位置跟探測到的總長度
+    // 比較出來的(見 HandleRemoteAutoplay),不是播放器的 ended 事件。倒數期間記著要切到哪一部,
+    // 倒數到了才真的 SetVideo,中途使用者手動操作(選片/播放/拖曳…)就取消。
+    private int _remoteAutoplayCountdownSeconds = VideoServerSettingsService.DefaultAutoplayCountdownSeconds;
+    private DateTime? _remoteAutoplayAtUtc;
+    private string? _remoteAutoplayNextPath;
+
     private void RemoteControlModeToggle_Click(object sender, RoutedEventArgs e)
     {
         var enabled = RemoteControlModeToggle.IsChecked == true;
         _videoStreaming.ControlState.SetEnabled(enabled);
+        CancelRemoteAutoplay();
         RemoteControlDetailPanel.Visibility = enabled ? Visibility.Visible : Visibility.Collapsed;
         RefreshRemoteControlUi();
     }
@@ -39,9 +51,143 @@ public partial class MainWindow
             return;
         }
 
-        _videoStreaming.ControlState.SetVideo(entry.RelativePath);
-        UpdateRemoteDurationAsync(entry.RelativePath);
+        SelectRemoteVideo(entry.RelativePath);
+    }
+
+    private void SelectRemoteVideo(string relativePath)
+    {
+        CancelRemoteAutoplay();
+        _videoStreaming.ControlState.SetVideo(relativePath);
+        UpdateRemoteDurationAsync(relativePath);
         RefreshRemoteControlUi();
+    }
+
+    /// <summary>遙控面板目前的播放清單順序:依面板上選的排序方式,勾了「隨機播放」就再用
+    /// <see cref="_remoteShuffleSeed"/> 洗牌一次,跟觀看頁共用 <see cref="VideoStreamingService.GetDisplayOrder"/>。</summary>
+    private List<VideoManifestEntry> GetRemoteControlPlaylist()
+    {
+        var manifest = _videoStreaming.Manifest;
+        var sort = RemoteControlSortComboBox.SelectedItem is ComboBoxItem { Tag: string tag }
+            ? tag
+            : VideoServerSettingsService.DefaultSortValue;
+        return _videoStreaming
+            .GetDisplayOrder(sort, RemoteControlShuffleCheckBox.IsChecked == true, _remoteShuffleSeed)
+            .Select(i => manifest[i])
+            .ToList();
+    }
+
+    private void RefreshRemoteControlPlaylist()
+    {
+        RemoteControlVideoListItemsControl.ItemsSource = GetRemoteControlPlaylist();
+    }
+
+    /// <summary>目前選片在播放清單裡往前/往後 <paramref name="delta"/> 格的影片;還沒選片時從第一部開始,
+    /// 超出清單範圍回傳 null。</summary>
+    private string? GetRemoteNeighborPath(int delta)
+    {
+        var playlist = GetRemoteControlPlaylist();
+        if (playlist.Count == 0)
+        {
+            return null;
+        }
+
+        var currentPath = _videoStreaming.ControlState.Snapshot().VideoRelativePath;
+        var currentIndex = playlist.FindIndex(m => m.RelativePath == currentPath);
+        var nextIndex = currentIndex < 0 ? 0 : currentIndex + delta;
+        return nextIndex >= 0 && nextIndex < playlist.Count ? playlist[nextIndex].RelativePath : null;
+    }
+
+    private void RemoteControlSortComboBox_SelectionChanged(object sender, SelectionChangedEventArgs e)
+    {
+        if (_videoStreaming.IsRunning)
+        {
+            RefreshRemoteControlPlaylist();
+        }
+    }
+
+    private void RemoteControlShuffleCheckBox_Click(object sender, RoutedEventArgs e)
+    {
+        // 每次重新勾選都換一組種子,不然關掉再打開會得到跟上次一模一樣的「隨機」順序。
+        if (RemoteControlShuffleCheckBox.IsChecked == true)
+        {
+            _remoteShuffleSeed = Random.Shared.Next();
+        }
+
+        RefreshRemoteControlPlaylist();
+    }
+
+    private void RemoteControlAutoplayCheckBox_Click(object sender, RoutedEventArgs e)
+    {
+        if (RemoteControlAutoplayCheckBox.IsChecked != true)
+        {
+            CancelRemoteAutoplay();
+        }
+    }
+
+    private void RemoteControlCancelAutoplayButton_Click(object sender, RoutedEventArgs e) => CancelRemoteAutoplay();
+
+    private void CancelRemoteAutoplay()
+    {
+        _remoteAutoplayAtUtc = null;
+        _remoteAutoplayNextPath = null;
+        RemoteControlAutoplayPanel.Visibility = Visibility.Collapsed;
+    }
+
+    /// <summary>
+    /// 由 <see cref="RefreshRemoteControlUi"/> 定期呼叫:目前選片(外插後的)位置走到探測出的總長度時,
+    /// 先把狀態定在片尾、改成暫停(不然碼表會一直往後算,超過影片長度),勾了「自動播放下一部」
+    /// 而且清單還有下一部的話就開始倒數,倒數結束才切過去。總長度探測失敗(null)時無從判斷
+    /// 播完了沒有,這種影片就不會自動接下一部。
+    /// </summary>
+    private void HandleRemoteAutoplay()
+    {
+        if (_remoteAutoplayAtUtc is { } autoplayAt)
+        {
+            var secondsLeft = (int)Math.Ceiling((autoplayAt - DateTime.UtcNow).TotalSeconds);
+            if (secondsLeft <= 0)
+            {
+                var nextPath = _remoteAutoplayNextPath;
+                CancelRemoteAutoplay();
+                if (nextPath != null)
+                {
+                    SelectRemoteVideo(nextPath);
+                }
+            }
+            else
+            {
+                ShowRemoteAutoplayCountdown(secondsLeft);
+            }
+
+            return;
+        }
+
+        var snapshot = _videoStreaming.ControlState.Snapshot();
+        if (!snapshot.Enabled ||
+            !snapshot.IsPlaying ||
+            _remoteDurationMs is not { } durationMs ||
+            durationMs <= 0 ||
+            _remoteDurationProbedForPath != snapshot.VideoRelativePath ||
+            snapshot.PositionMs < durationMs)
+        {
+            return;
+        }
+
+        _videoStreaming.ControlState.SetPlaying(false);
+        _videoStreaming.ControlState.Seek(durationMs);
+
+        if (RemoteControlAutoplayCheckBox.IsChecked == true && GetRemoteNeighborPath(1) is { } next)
+        {
+            _remoteAutoplayNextPath = next;
+            _remoteAutoplayAtUtc = DateTime.UtcNow.AddSeconds(_remoteAutoplayCountdownSeconds);
+            ShowRemoteAutoplayCountdown(_remoteAutoplayCountdownSeconds);
+        }
+    }
+
+    private void ShowRemoteAutoplayCountdown(int secondsLeft)
+    {
+        var nextName = _videoStreaming.Manifest.FirstOrDefault(m => m.RelativePath == _remoteAutoplayNextPath)?.Name;
+        RemoteControlAutoplayText.Text = $"即將播放下一部:{nextName}({secondsLeft})";
+        RemoteControlAutoplayPanel.Visibility = Visibility.Visible;
     }
 
     /// <summary>探測目前選片的總長度(見 <see cref="VideoDurationProbe"/>),供時間軸畫用。非同步,
@@ -64,13 +210,22 @@ public partial class MainWindow
 
     private void RemoteControlPlayPauseButton_Click(object sender, RoutedEventArgs e)
     {
+        CancelRemoteAutoplay();
         var snapshot = _videoStreaming.ControlState.Snapshot();
+
+        // 已經停在片尾時按播放就從頭開始,不然一按下去馬上又被判定成「播完了」。
+        if (!snapshot.IsPlaying && _remoteDurationMs is > 0 && snapshot.PositionMs >= _remoteDurationMs.Value)
+        {
+            _videoStreaming.ControlState.Seek(0);
+        }
+
         _videoStreaming.ControlState.SetPlaying(!snapshot.IsPlaying);
         RefreshRemoteControlUi();
     }
 
     private void RemoteControlRewindButton_Click(object sender, RoutedEventArgs e)
     {
+        CancelRemoteAutoplay();
         var snapshot = _videoStreaming.ControlState.Snapshot();
         _videoStreaming.ControlState.Seek(Math.Max(0, snapshot.PositionMs - 10_000));
         RefreshRemoteControlUi();
@@ -78,33 +233,20 @@ public partial class MainWindow
 
     private void RemoteControlForwardButton_Click(object sender, RoutedEventArgs e)
     {
+        CancelRemoteAutoplay();
         var snapshot = _videoStreaming.ControlState.Snapshot();
         _videoStreaming.ControlState.Seek(snapshot.PositionMs + 10_000);
         RefreshRemoteControlUi();
     }
 
-    /// <summary>依 <see cref="VideoStreamingService.Manifest"/> 的原始順序切到上一部/下一部,跟一般
-    /// 觀看端的上一部/下一部是同一種「在清單裡移動一格」的概念——遙控面板沒有排序下拉選單,
-    /// 直接用 manifest 原始順序,不像觀看端會依使用者選的排序方式決定順序。</summary>
+    /// <summary>依遙控面板目前的播放清單順序(排序方式 + 隨機播放,見 <see cref="GetRemoteControlPlaylist"/>)
+    /// 切到上一部/下一部,跟觀看端的上一部/下一部是同一種「在清單裡移動一格」的概念。</summary>
     private void RemoteControlSkip(int delta)
     {
-        var manifest = _videoStreaming.Manifest;
-        if (manifest.Count == 0)
+        if (GetRemoteNeighborPath(delta) is { } path)
         {
-            return;
+            SelectRemoteVideo(path);
         }
-
-        var currentPath = _videoStreaming.ControlState.Snapshot().VideoRelativePath;
-        var currentIndex = manifest.ToList().FindIndex(m => m.RelativePath == currentPath);
-        var nextIndex = (currentIndex >= 0 ? currentIndex : 0) + delta;
-        if (nextIndex < 0 || nextIndex >= manifest.Count)
-        {
-            return;
-        }
-
-        _videoStreaming.ControlState.SetVideo(manifest[nextIndex].RelativePath);
-        UpdateRemoteDurationAsync(manifest[nextIndex].RelativePath);
-        RefreshRemoteControlUi();
     }
 
     private void RemoteControlPreviousButton_Click(object sender, RoutedEventArgs e) => RemoteControlSkip(-1);
@@ -147,6 +289,7 @@ public partial class MainWindow
         _isDraggingRemoteTimeline = false;
         if (RemoteControlTimelineSlider.IsEnabled)
         {
+            CancelRemoteAutoplay();
             _videoStreaming.ControlState.Seek((long)RemoteControlTimelineSlider.Value);
         }
 
@@ -161,6 +304,8 @@ public partial class MainWindow
         {
             return;
         }
+
+        HandleRemoteAutoplay();
 
         var snapshot = _videoStreaming.ControlState.Snapshot();
         var entry = snapshot.VideoRelativePath is { } path

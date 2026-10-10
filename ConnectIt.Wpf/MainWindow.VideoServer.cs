@@ -44,6 +44,7 @@ public partial class MainWindow
         {
             DefaultSort = _videoServerSettings.DefaultSort,
             AutoplayNext = _videoServerSettings.AutoplayNext,
+            Shuffle = _videoServerSettings.Shuffle,
             DefaultVolumePercent = _videoServerSettings.DefaultVolume,
             DefaultSpeed = _videoServerSettings.DefaultSpeed,
             AutoplayCountdownSeconds = _videoServerSettings.AutoplayCountdownSeconds,
@@ -65,7 +66,15 @@ public partial class MainWindow
         RemoteControlCard.Visibility = Visibility.Visible;
         RemoteControlModeToggle.IsChecked = false;
         RemoteControlDetailPanel.Visibility = Visibility.Collapsed;
-        RemoteControlVideoListItemsControl.ItemsSource = _videoStreaming.Manifest;
+        // 排序/隨機播放/自動播放的初始值沿用設定頁的影片伺服器預設值,之後在遙控面板上的調整
+        // 只影響這一次分享,不會寫回設定。
+        _remoteShuffleSeed = Random.Shared.Next();
+        _remoteAutoplayCountdownSeconds = options.AutoplayCountdownSeconds;
+        CancelRemoteAutoplay();
+        SelectComboBoxItemByTag(RemoteControlSortComboBox, options.DefaultSort);
+        RemoteControlShuffleCheckBox.IsChecked = options.Shuffle;
+        RemoteControlAutoplayCheckBox.IsChecked = options.AutoplayNext;
+        RefreshRemoteControlPlaylist();
         RemoteControlSpeedComboBox.SelectedIndex = 1;
         RemoteControlVolumeSlider.Value = 1;
         RemoteControlMuteIcon.Kind = PackIconKind.VolumeHigh;
@@ -85,6 +94,7 @@ public partial class MainWindow
         ShareVideoFolderButton.Visibility = Visibility.Visible;
         StopVideoServerButton.Visibility = Visibility.Collapsed;
 
+        CancelRemoteAutoplay();
         RemoteControlCard.Visibility = Visibility.Collapsed;
         RemoteControlVideoListItemsControl.ItemsSource = null;
     }

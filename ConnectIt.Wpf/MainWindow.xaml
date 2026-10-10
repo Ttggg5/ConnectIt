@@ -367,6 +367,28 @@
                                         ValueChanged="RemoteControlVolumeSlider_ValueChanged"/>
                             </StackPanel>
 
+                            <StackPanel Orientation="Horizontal" Margin="0,8,0,0" VerticalAlignment="Center">
+                                <ComboBox x:Name="RemoteControlSortComboBox" Width="180" VerticalAlignment="Center"
+                                          ToolTip="排序方式" SelectionChanged="RemoteControlSortComboBox_SelectionChanged">
+                                    <ComboBoxItem Tag="name_asc" Content="檔名(A→Z)"/>
+                                    <ComboBoxItem Tag="name_desc" Content="檔名(Z→A)"/>
+                                    <ComboBoxItem Tag="size_asc" Content="檔案大小(小→大)"/>
+                                    <ComboBoxItem Tag="size_desc" Content="檔案大小(大→小)"/>
+                                    <ComboBoxItem Tag="date_desc" Content="修改時間(新→舊)"/>
+                                    <ComboBoxItem Tag="date_asc" Content="修改時間(舊→新)"/>
+                                </ComboBox>
+                                <CheckBox x:Name="RemoteControlShuffleCheckBox" Content="隨機播放" Margin="16,0,0,0"
+                                          VerticalAlignment="Center" Click="RemoteControlShuffleCheckBox_Click"/>
+                                <CheckBox x:Name="RemoteControlAutoplayCheckBox" Content="自動播放下一部" Margin="16,0,0,0"
+                                          VerticalAlignment="Center" Click="RemoteControlAutoplayCheckBox_Click"/>
+                            </StackPanel>
+
+                            <StackPanel x:Name="RemoteControlAutoplayPanel" Orientation="Horizontal" Margin="0,8,0,0" Visibility="Collapsed">
+                                <TextBlock x:Name="RemoteControlAutoplayText" VerticalAlignment="Center"/>
+                                <Button Style="{StaticResource MaterialDesignFlatButton}" Content="取消" Margin="8,0,0,0"
+                                        Click="RemoteControlCancelAutoplayButton_Click"/>
+                            </StackPanel>
+
                             <TextBlock Text="選一部影片開始遙控:" Opacity="0.6" FontSize="12" Margin="0,12,0,4"/>
                             <ItemsControl x:Name="RemoteControlVideoListItemsControl">
                                 <ItemsControl.ItemsPanel>
