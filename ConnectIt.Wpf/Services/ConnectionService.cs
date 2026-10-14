@@ -706,7 +706,7 @@ public sealed class ConnectionService : IDisposable
             return;
         }
 
-        _ = WriteControlAsync(new FileControlMessage { Type = "file-accept", TransferId = transferId });
+        _ = AcceptIncomingFileAsync(transfer);
     }
 
     /// <summary>接收到 <see cref="FolderOffered"/> 之後,使用者確認是否接受整個資料夾時呼叫。</summary>
@@ -963,13 +963,14 @@ public sealed class ConnectionService : IDisposable
             return;
         }
 
+        ActiveTransfer transfer;
         try
         {
             var directory = Path.GetDirectoryName(destinationPath)!;
             Directory.CreateDirectory(directory);
             destinationPath = GetUniqueDestinationPath(directory, Path.GetFileName(destinationPath));
 
-            var transfer = new ActiveTransfer
+            transfer = new ActiveTransfer
             {
                 TransferId = message.TransferId!,
                 Direction = FileTransferDirection.Receiving,
@@ -990,7 +991,7 @@ public sealed class ConnectionService : IDisposable
             return;
         }
 
-        _ = WriteControlAsync(new FileControlMessage { Type = "file-accept", TransferId = message.TransferId });
+        _ = AcceptIncomingFileAsync(transfer);
     }
 
     private void HandleFolderAccept(FileControlMessage message)
@@ -1257,27 +1258,47 @@ public sealed class ConnectionService : IDisposable
 
         if (transfer.TransferredBytes == transfer.TotalBytes)
         {
-            _activeTransfer = null;
-            transfer.FileStream.Dispose();
-            _ = WriteControlAsync(new FileControlMessage { Type = "file-complete", TransferId = transfer.TransferId });
-
-            if (transfer.FolderTransferId is { } folderTransferId
-                && _activeFolderSession is { } session && session.FolderTransferId == folderTransferId)
-            {
-                session.CompletedBytes += transfer.TotalBytes;
-                session.CompletedEntries += 1;
-                return; // 資料夾層級的完成事件要等收到傳送端送來的 folder-complete 才觸發。
-            }
-
-            FileTransferEnded?.Invoke(this, new FileTransferEndedEventArgs
-            {
-                TransferId = transfer.TransferId,
-                Direction = FileTransferDirection.Receiving,
-                Reason = FileTransferEndReason.Completed,
-                FileName = transfer.FileName,
-                SavedFilePath = transfer.SavedFilePath,
-            });
+            CompleteReceivedFile(transfer);
         }
+    }
+
+    /// <summary>
+    /// 接收端:回 file-accept。0 byte 的檔案不會有任何 Chunk 訊框,也就不會走到
+    /// <see cref="HandleChunkFrame"/> 裡「收滿宣告大小」的完成判斷,所以接受後直接完成,
+    /// 否則雙方會一直互等(傳送端等 file-complete、接收端等資料)。
+    /// </summary>
+    private async Task AcceptIncomingFileAsync(ActiveTransfer transfer)
+    {
+        await WriteControlAsync(new FileControlMessage { Type = "file-accept", TransferId = transfer.TransferId }).ConfigureAwait(false);
+
+        if (transfer.TotalBytes == 0 && _activeTransfer == transfer)
+        {
+            CompleteReceivedFile(transfer);
+        }
+    }
+
+    private void CompleteReceivedFile(ActiveTransfer transfer)
+    {
+        _activeTransfer = null;
+        transfer.FileStream!.Dispose();
+        _ = WriteControlAsync(new FileControlMessage { Type = "file-complete", TransferId = transfer.TransferId });
+
+        if (transfer.FolderTransferId is { } folderTransferId
+            && _activeFolderSession is { } session && session.FolderTransferId == folderTransferId)
+        {
+            session.CompletedBytes += transfer.TotalBytes;
+            session.CompletedEntries += 1;
+            return; // 資料夾層級的完成事件要等收到傳送端送來的 folder-complete 才觸發。
+        }
+
+        FileTransferEnded?.Invoke(this, new FileTransferEndedEventArgs
+        {
+            TransferId = transfer.TransferId,
+            Direction = FileTransferDirection.Receiving,
+            Reason = FileTransferEndReason.Completed,
+            FileName = transfer.FileName,
+            SavedFilePath = transfer.SavedFilePath,
+        });
     }
 
     private async Task SendFileChunksAsync(ActiveTransfer transfer)

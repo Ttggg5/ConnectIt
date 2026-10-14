@@ -100,6 +100,30 @@ public class FileTransferTests : IDisposable
     }
 
     [Fact]
+    public async Task SendFileAsync_EmptyFile_CompletesOnBothSides()
+    {
+        await ConnectAsync();
+
+        var sourcePath = CreateTempSourceFile("empty.wav", 0);
+        var downloadFolder = CreateDownloadFolder("empty");
+
+        _acceptor.FileOffered += (_, e) => _acceptor.RespondToFileOffer(e.TransferId, true, downloadFolder);
+
+        FileTransferEndedEventArgs? senderEnded = null;
+        FileTransferEndedEventArgs? receiverEnded = null;
+        _initiator.FileTransferEnded += (_, e) => senderEnded = e;
+        _acceptor.FileTransferEnded += (_, e) => receiverEnded = e;
+
+        await _initiator.SendFileAsync(sourcePath);
+
+        Assert.True(await WaitUntilAsync(() => senderEnded != null && receiverEnded != null, WaitTimeout));
+        Assert.Equal(FileTransferEndReason.Completed, senderEnded!.Reason);
+        Assert.Equal(FileTransferEndReason.Completed, receiverEnded!.Reason);
+        Assert.True(File.Exists(receiverEnded.SavedFilePath));
+        Assert.Equal(0, new FileInfo(receiverEnded.SavedFilePath!).Length);
+    }
+
+    [Fact]
     public async Task SendFileAsync_WhenRejected_SenderGetsRejectedAndNothingIsSaved()
     {
         await ConnectAsync();
