@@ -1,7 +1,9 @@
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Input;
+using System.Windows.Media.Imaging;
 using System.Windows.Threading;
+using ConnectIt.Wpf.Models;
 using ConnectIt.Wpf.Services;
 using MaterialDesignThemes.Wpf;
 
@@ -35,14 +37,55 @@ public partial class MainWindow
     private DateTime? _remoteAutoplayAtUtc;
     private string? _remoteAutoplayNextPath;
 
-    private void RemoteControlModeToggle_Click(object sender, RoutedEventArgs e)
+    // 影片庫目前顯示的卡片(已套用排序/隨機播放與搜尋關鍵字),以及正在顯示縮圖的「正在播放」影片。
+    private List<RemoteVideoItem> _remoteVideoItems = [];
+    private string? _remoteNowPlayingImagePath;
+
+    private void RemoteControlModeToggle_Click(object sender, RoutedEventArgs e) =>
+        SetRemoteControlEnabled(RemoteControlModeToggle.IsChecked == true);
+
+    private void StartRemoteControlButton_Click(object sender, RoutedEventArgs e)
     {
-        var enabled = RemoteControlModeToggle.IsChecked == true;
+        RemoteControlModeToggle.IsChecked = true;
+        SetRemoteControlEnabled(true);
+    }
+
+    private void SetRemoteControlEnabled(bool enabled)
+    {
         _videoStreaming.ControlState.SetEnabled(enabled);
         CancelRemoteAutoplay();
-        RemoteControlDetailPanel.Visibility = enabled ? Visibility.Visible : Visibility.Collapsed;
+        UpdateRemoteControlModeUi(enabled);
         RefreshRemoteControlUi();
     }
+
+    /// <summary>遙控面板子頁:未啟用時顯示介紹與「開始遙控」,啟用後才顯示影片庫與控制面板。</summary>
+    private void UpdateRemoteControlModeUi(bool enabled)
+    {
+        RemoteControlDetailPanel.Visibility = enabled ? Visibility.Visible : Visibility.Collapsed;
+        RemoteControlIntroPanel.Visibility = enabled ? Visibility.Collapsed : Visibility.Visible;
+        RemoteControlModeLabel.Text = enabled ? "遙控中" : "遙控未啟用";
+        RemoteControlCardStatusText.Text = enabled
+            ? "遙控中:觀看端正跟著你的操作同步播放。"
+            : "讓所有觀看端同步播放你選的影片,適合一起看片或簡報。";
+    }
+
+    private void RemoteControlBackButton_Click(object sender, RoutedEventArgs e)
+    {
+        VideoShareTabButton.IsChecked = true;
+        SetActivePage(AppPage.Video);
+    }
+
+    private void RemoteControlSearchTextBox_TextChanged(object sender, TextChangedEventArgs e)
+    {
+        if (_videoStreaming.IsRunning)
+        {
+            RefreshRemoteControlPlaylist();
+        }
+    }
+
+    /// <summary>本機影片伺服器上某部影片的縮圖網址(跟觀看端網頁用的是同一個 /thumbnail/ 端點)。</summary>
+    private string BuildLocalThumbnailUrl(string relativePath) =>
+        (VideoServerBaseUrl ?? string.Empty) + "thumbnail/" + string.Join('/', relativePath.Split('/').Select(Uri.EscapeDataString));
 
     private void RemoteControlVideoButton_Click(object sender, RoutedEventArgs e)
     {
@@ -76,9 +119,16 @@ public partial class MainWindow
             .ToList();
     }
 
+    /// <summary>重建影片庫卡片:依目前的排序/隨機播放順序,再套用搜尋關鍵字過濾(只影響顯示,
+    /// 上一部/下一部/自動播放仍依完整的播放清單順序)。</summary>
     private void RefreshRemoteControlPlaylist()
     {
-        RemoteControlVideoListItemsControl.ItemsSource = GetRemoteControlPlaylist();
+        var keyword = RemoteControlSearchTextBox.Text?.Trim() ?? string.Empty;
+        _remoteVideoItems = GetRemoteControlPlaylist()
+            .Where(entry => keyword.Length == 0 || entry.RelativePath.Contains(keyword, StringComparison.OrdinalIgnoreCase))
+            .Select(entry => new RemoteVideoItem { Entry = entry, ThumbnailUrl = BuildLocalThumbnailUrl(entry.RelativePath) })
+            .ToList();
+        RemoteControlVideoListItemsControl.ItemsSource = _remoteVideoItems;
     }
 
     /// <summary>目前選片在播放清單裡往前/往後 <paramref name="delta"/> 格的影片;還沒選片時從第一部開始,
@@ -300,12 +350,19 @@ public partial class MainWindow
     /// 按下按鈕之後,還是計時器定期重畫讓進度看起來會自己走動,都走這一個方法。</summary>
     private void RefreshRemoteControlUi()
     {
-        if (!_videoStreaming.IsRunning || RemoteControlCard.Visibility != Visibility.Visible)
+        if (!_videoStreaming.IsRunning)
         {
             return;
         }
 
+        // 自動播放下一部要在背景持續判斷(使用者離開遙控面板子頁也照樣會接下一部),
+        // 畫面本身則只有子頁顯示中才需要重畫。
         HandleRemoteAutoplay();
+
+        if (_activePage != AppPage.RemoteControl)
+        {
+            return;
+        }
 
         var snapshot = _videoStreaming.ControlState.Snapshot();
         var entry = snapshot.VideoRelativePath is { } path
@@ -313,6 +370,18 @@ public partial class MainWindow
             : null;
 
         RemoteControlNowPlayingText.Text = entry?.Name ?? "尚未選擇影片";
+        if (!Equals(RemoteControlVideoListItemsControl.Tag, snapshot.VideoRelativePath))
+        {
+            RemoteControlVideoListItemsControl.Tag = snapshot.VideoRelativePath;
+        }
+
+        if (_remoteNowPlayingImagePath != entry?.RelativePath)
+        {
+            _remoteNowPlayingImagePath = entry?.RelativePath;
+            RemoteControlNowPlayingImage.Source = entry is null
+                ? null
+                : new BitmapImage(new Uri(BuildLocalThumbnailUrl(entry.RelativePath)));
+        }
         RemoteControlPlayPauseIcon.Kind = snapshot.IsPlaying ? PackIconKind.Pause : PackIconKind.Play;
 
         // 拖曳時間軸中就不要被這裡(定時器/其他指令觸發)的重畫蓋掉使用者正在拖曳的值,

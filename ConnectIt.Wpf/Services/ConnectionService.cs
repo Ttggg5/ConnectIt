@@ -147,7 +147,7 @@ public sealed class ConnectionService : IDisposable
             using var reader = new StreamReader(stream, Encoding.UTF8, leaveOpen: true);
             var writer = new StreamWriter(stream, Encoding.UTF8) { AutoFlush = true };
 
-            var line = await ReadLineWithTimeoutAsync(reader, RequestTimeout, token).ConfigureAwait(false);
+            var (_, line) = await ReadLineWithTimeoutAsync(reader, RequestTimeout, token).ConfigureAwait(false);
 
             ConnectMessage? request = null;
             if (line != null)
@@ -218,8 +218,20 @@ public sealed class ConnectionService : IDisposable
         }
     }
 
-    /// <summary>主動連線到指定裝置並送出連線請求,等待對方確認。</summary>
+    /// <summary>主動連線到指定裝置並送出連線請求,等待對方確認。只關心成功與否時用這個;
+    /// 要在畫面上說明失敗原因(被拒絕/逾時/連不到/已取消)請用 <see cref="RequestConnectionWithOutcomeAsync"/>。</summary>
     public async Task<bool> RequestConnectionAsync(
+        IPAddress address, int port, string myDeviceName, string remoteDisplayName, CancellationToken cancellationToken = default)
+    {
+        var outcome = await RequestConnectionWithOutcomeAsync(address, port, myDeviceName, remoteDisplayName, cancellationToken)
+            .ConfigureAwait(false);
+        return outcome == ConnectionRequestOutcome.Accepted;
+    }
+
+    /// <summary>主動連線到指定裝置並送出連線請求,等待對方確認,回傳詳細的結果供 UI 顯示對應的說明。
+    /// <paramref name="cancellationToken"/> 取消時(使用者在「等待對方接受」對話框按了取消)回傳
+    /// <see cref="ConnectionRequestOutcome.Cancelled"/>,並關閉這條尚未建立完成的連線。</summary>
+    public async Task<ConnectionRequestOutcome> RequestConnectionWithOutcomeAsync(
         IPAddress address, int port, string myDeviceName, string remoteDisplayName, CancellationToken cancellationToken = default)
     {
         var client = new TcpClient();
@@ -232,9 +244,23 @@ public sealed class ConnectionService : IDisposable
                 {
                     await client.ConnectAsync(address, port, connectCts.Token).ConfigureAwait(false);
                 }
-                catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
+                catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
                 {
-                    throw new TimeoutException("連線逾時(對方可能離線或位址不可達)。");
+                    StatusChanged?.Invoke(this, $"已取消對 {remoteDisplayName} 的連線請求。");
+                    client.Close();
+                    return ConnectionRequestOutcome.Cancelled;
+                }
+                catch (OperationCanceledException)
+                {
+                    StatusChanged?.Invoke(this, $"連線失敗:連線逾時({remoteDisplayName} 可能離線或位址不可達)。");
+                    client.Close();
+                    return ConnectionRequestOutcome.Unreachable;
+                }
+                catch (SocketException ex)
+                {
+                    StatusChanged?.Invoke(this, $"連線失敗:{ex.Message}");
+                    client.Close();
+                    return ConnectionRequestOutcome.Unreachable;
                 }
             }
 
@@ -251,7 +277,15 @@ public sealed class ConnectionService : IDisposable
                 DeviceName = myDeviceName,
             })).ConfigureAwait(false);
 
-            var line = await ReadLineWithTimeoutAsync(reader, ResponseTimeout, cancellationToken).ConfigureAwait(false);
+            var (timedOut, line) = await ReadLineWithTimeoutAsync(reader, ResponseTimeout, cancellationToken).ConfigureAwait(false);
+
+            if (cancellationToken.IsCancellationRequested)
+            {
+                StatusChanged?.Invoke(this, $"已取消對 {remoteDisplayName} 的連線請求。");
+                client.Close();
+                return ConnectionRequestOutcome.Cancelled;
+            }
+
             var response = line != null ? JsonSerializer.Deserialize<ConnectMessage>(line) : null;
 
             if (response is { Type: "accept" })
@@ -264,30 +298,32 @@ public sealed class ConnectionService : IDisposable
                     RemoteAddress = address,
                     Role = ConnectionRole.Initiator,
                 });
-                return true;
+                return ConnectionRequestOutcome.Accepted;
             }
 
-            StatusChanged?.Invoke(this, response == null
+            StatusChanged?.Invoke(this, timedOut
                 ? $"連線逾時,{remoteDisplayName} 沒有回應。"
                 : $"{remoteDisplayName} 拒絕了連線請求。");
             client.Close();
-            return false;
+            return timedOut ? ConnectionRequestOutcome.Timeout : ConnectionRequestOutcome.Rejected;
         }
         catch (Exception ex)
         {
             StatusChanged?.Invoke(this, $"連線失敗:{ex.Message}");
             client.Close();
-            return false;
+            return cancellationToken.IsCancellationRequested ? ConnectionRequestOutcome.Cancelled : ConnectionRequestOutcome.Unreachable;
         }
     }
 
-    private static async Task<string?> ReadLineWithTimeoutAsync(StreamReader reader, TimeSpan timeout, CancellationToken token)
+    /// <summary>讀取一行回應,最多等 <paramref name="timeout"/>。回傳 TimedOut=true 代表時間到(或被取消)
+    /// 還沒收到任何東西;TimedOut=false 而 Line 為 null 代表對方直接把連線關掉了。</summary>
+    private static async Task<(bool TimedOut, string? Line)> ReadLineWithTimeoutAsync(StreamReader reader, TimeSpan timeout, CancellationToken token)
     {
         var readTask = reader.ReadLineAsync();
         var delayTask = Task.Delay(timeout, token);
 
         var completed = await Task.WhenAny(readTask, delayTask).ConfigureAwait(false);
-        return completed == readTask ? await readTask.ConfigureAwait(false) : null;
+        return completed == readTask ? (false, await readTask.ConfigureAwait(false)) : (true, null);
     }
 
     /// <summary>

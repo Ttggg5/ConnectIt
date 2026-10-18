@@ -29,3 +29,22 @@ public sealed class ConnectedEventArgs : EventArgs
 
     public required ConnectionRole Role { get; init; }
 }
+
+/// <summary>主動送出連線請求的結果,UI 依此顯示對應的說明(而不是一律「對方未接受」)。</summary>
+public enum ConnectionRequestOutcome
+{
+    /// <summary>對方按下接受,連線已建立。</summary>
+    Accepted,
+
+    /// <summary>對方按下拒絕(或直接關閉了連線)。</summary>
+    Rejected,
+
+    /// <summary>已送出請求,但對方在時限內沒有回應。</summary>
+    Timeout,
+
+    /// <summary>根本連不上對方(離線、位址不可達、被防火牆擋下)。</summary>
+    Unreachable,
+
+    /// <summary>使用者自己取消了等待。</summary>
+    Cancelled,
+}

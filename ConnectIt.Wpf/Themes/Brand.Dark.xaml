@@ -1,0 +1,30 @@
+<ResourceDictionary xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+                    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
+    <!-- 深色模式的品牌表面/文字色(Aurora 設計系統)。ThemeService 依目前主題在
+         Brand.Dark.xaml / Brand.Light.xaml 之間切換,兩份必須定義完全相同的 key。 -->
+    <Color x:Key="Brand.Color.Background">#0B1020</Color>
+    <Color x:Key="Brand.Color.Surface">#121A2E</Color>
+    <Color x:Key="Brand.Color.SurfaceVariant">#1A2440</Color>
+    <Color x:Key="Brand.Color.Outline">#26314F</Color>
+    <Color x:Key="Brand.Color.Text">#E6E9F5</Color>
+    <Color x:Key="Brand.Color.TextMuted">#8B93B0</Color>
+
+    <SolidColorBrush x:Key="Brand.Brush.Background" Color="#0B1020"/>
+    <SolidColorBrush x:Key="Brand.Brush.Surface" Color="#121A2E"/>
+    <SolidColorBrush x:Key="Brand.Brush.SurfaceVariant" Color="#1A2440"/>
+    <SolidColorBrush x:Key="Brand.Brush.SurfaceHover" Color="#1F2A4A"/>
+    <SolidColorBrush x:Key="Brand.Brush.Outline" Color="#26314F"/>
+    <SolidColorBrush x:Key="Brand.Brush.Text" Color="#E6E9F5"/>
+    <SolidColorBrush x:Key="Brand.Brush.TextMuted" Color="#8B93B0"/>
+    <!-- 主色在深色背景上用亮一階的靛藍,維持足夠對比。 -->
+    <SolidColorBrush x:Key="Brand.Brush.Primary" Color="#818CF8"/>
+    <SolidColorBrush x:Key="Brand.Brush.PrimarySoft" Color="#26284F"/>
+    <SolidColorBrush x:Key="Brand.Brush.AccentSoft" Color="#12323F"/>
+    <SolidColorBrush x:Key="Brand.Brush.Scrim" Color="#B3050814"/>
+
+    <LinearGradientBrush x:Key="Brand.Brush.HeroBackground" StartPoint="0,0" EndPoint="1,1">
+        <GradientStop Color="#2B2F7A" Offset="0"/>
+        <GradientStop Color="#16365A" Offset="0.6"/>
+        <GradientStop Color="#0E3F4F" Offset="1"/>
+    </LinearGradientBrush>
+</ResourceDictionary>

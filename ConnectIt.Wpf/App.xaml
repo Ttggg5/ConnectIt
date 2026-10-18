@@ -6,8 +6,11 @@
     <Application.Resources>
         <ResourceDictionary>
             <ResourceDictionary.MergedDictionaries>
-                <materialDesign:CustomColorTheme BaseTheme="Light" PrimaryColor="#6d83a6" SecondaryColor="#889cba" />
+                <materialDesign:CustomColorTheme BaseTheme="Dark" PrimaryColor="#6366F1" SecondaryColor="#22D3EE" />
                 <ResourceDictionary Source="pack://application:,,,/MaterialDesignThemes.Wpf;component/Themes/MaterialDesign3.Defaults.xaml" />
+                <ResourceDictionary Source="Themes/Brand.xaml" />
+                <!-- 必須是最後一個:ThemeService 依目前主題把這一份換成 Brand.Light.xaml / Brand.Dark.xaml。 -->
+                <ResourceDictionary Source="Themes/Brand.Dark.xaml" />
             </ResourceDictionary.MergedDictionaries>
         </ResourceDictionary>
     </Application.Resources>

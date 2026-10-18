@@ -21,6 +21,8 @@ public sealed class ThemeService : IDisposable
 {
     private const string PersonalizeKeyPath = @"Software\Microsoft\Windows\CurrentVersion\Themes\Personalize";
     private const string AppsUseLightThemeValueName = "AppsUseLightTheme";
+    private const string BrandDarkUri = "pack://application:,,,/ConnectIt.Wpf;component/Themes/Brand.Dark.xaml";
+    private const string BrandLightUri = "pack://application:,,,/ConnectIt.Wpf;component/Themes/Brand.Light.xaml";
 
     private readonly PaletteHelper _paletteHelper = new();
     private readonly string _settingsFilePath;
@@ -73,11 +75,52 @@ public sealed class ThemeService : IDisposable
     {
         var effectiveTheme = CurrentMode == AppThemeMode.Auto ? GetSystemBaseTheme() : CurrentMode;
 
+        var isDark = effectiveTheme == AppThemeMode.Dark;
+        var brandDictionary = SwapBrandDictionary(isDark);
+
         var theme = _paletteHelper.GetTheme();
-        theme.SetBaseTheme(effectiveTheme == AppThemeMode.Dark ? BaseTheme.Dark : BaseTheme.Light);
+        theme.SetBaseTheme(isDark ? BaseTheme.Dark : BaseTheme.Light);
+
+        // MaterialDesign 內建控制項(對話框、下拉選單、文字框…)的底色/文字色也對齊品牌色票,
+        // 不然會是 MaterialDesign 預設的中性灰,跟自訂的卡片/背景色調不一致。
+        if (brandDictionary["Brand.Color.Background"] is Color background &&
+            brandDictionary["Brand.Color.Surface"] is Color surface &&
+            brandDictionary["Brand.Color.Text"] is Color text)
+        {
+            theme.Background = background;
+            theme.Foreground = text;
+            theme.Cards.Background = surface;
+        }
+
         _paletteHelper.SetTheme(theme);
 
-        ApplyTitleBarTheme(effectiveTheme == AppThemeMode.Dark);
+        ApplyTitleBarTheme(isDark);
+    }
+
+    /// <summary>把 App.xaml 合併字典中最後一份(品牌表面色)換成對應目前主題的 Brand.Dark/Brand.Light。</summary>
+    private static ResourceDictionary SwapBrandDictionary(bool isDark)
+    {
+        var dictionaries = Application.Current.Resources.MergedDictionaries;
+        var replacement = new ResourceDictionary
+        {
+            Source = new Uri(isDark ? BrandDarkUri : BrandLightUri, UriKind.Absolute),
+        };
+
+        var existing = dictionaries.FirstOrDefault(d =>
+            d.Source is { } source &&
+            (source.OriginalString.EndsWith("Brand.Dark.xaml", StringComparison.OrdinalIgnoreCase) ||
+             source.OriginalString.EndsWith("Brand.Light.xaml", StringComparison.OrdinalIgnoreCase)));
+
+        if (existing != null)
+        {
+            dictionaries[dictionaries.IndexOf(existing)] = replacement;
+        }
+        else
+        {
+            dictionaries.Add(replacement);
+        }
+
+        return replacement;
     }
 
     /// <summary>透過 DWM API 把視窗標題列的深色模式與顏色調整成跟目前套用的 MaterialDesign 主題一致。</summary>
@@ -100,13 +143,13 @@ public sealed class ThemeService : IDisposable
             NativeMethods.DwmSetWindowAttribute(handle, NativeMethods.DwmwaUseImmersiveDarkMode, ref useDarkMode, sizeof(int));
 
             // 標題列/文字顏色只有 Windows 11 (build 22000+) 才支援,舊版系統呼叫會失敗但不影響其他設定。
-            if (Application.Current.Resources["MaterialDesignPaper"] is SolidColorBrush paperBrush)
+            if (Application.Current.Resources["Brand.Brush.Background"] is SolidColorBrush paperBrush)
             {
                 var captionColor = NativeMethods.ToColorRef(paperBrush.Color);
                 NativeMethods.DwmSetWindowAttribute(handle, NativeMethods.DwmwaCaptionColor, ref captionColor, sizeof(int));
             }
 
-            if (Application.Current.Resources["MaterialDesignBody"] is SolidColorBrush bodyBrush)
+            if (Application.Current.Resources["Brand.Brush.Text"] is SolidColorBrush bodyBrush)
             {
                 var textColor = NativeMethods.ToColorRef(bodyBrush.Color);
                 NativeMethods.DwmSetWindowAttribute(handle, NativeMethods.DwmwaTextColor, ref textColor, sizeof(int));

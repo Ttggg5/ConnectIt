@@ -1,6 +1,10 @@
+using System.Diagnostics;
 using System.IO;
 using System.Windows;
+using System.Windows.Controls;
+using ConnectIt.Wpf.Models;
 using ConnectIt.Wpf.Services;
+using MaterialDesignThemes.Wpf;
 using Microsoft.Win32;
 
 namespace ConnectIt.Wpf;
@@ -35,6 +39,7 @@ public partial class MainWindow
         }
 
         e.Effects = DragDropEffects.Copy;
+        DropOverlayText.Text = $"放開以傳送給 {ConnectedDeviceNameText.Text}";
         DropOverlay.Visibility = Visibility.Visible;
     }
 
@@ -110,10 +115,139 @@ public partial class MainWindow
 
     private void ShowFileTransferPanel(string fileName, string status)
     {
+        _lastReceivedRecord = null;
         FileTransferNameText.Text = fileName;
+        FileTransferIcon.Kind = PackIconKind.SwapVertical;
         FileTransferProgressBar.Value = 0;
+        FileTransferProgressBar.Visibility = Visibility.Visible;
         FileTransferStatusText.Text = status;
+        FileTransferDoneActions.Visibility = Visibility.Collapsed;
+        CancelFileTransferButton.Visibility = Visibility.Visible;
+        DismissFileTransferButton.Visibility = Visibility.Collapsed;
         FileTransferCard.Visibility = Visibility.Visible;
+    }
+
+    private void HideFileTransferPanel()
+    {
+        _lastReceivedRecord = null;
+        FileTransferCard.Visibility = Visibility.Collapsed;
+    }
+
+    /// <summary>最近一次「接收成功」的紀錄;傳輸卡片在完成狀態時的「開啟」/「在資料夾中顯示」就是作用在它上面。</summary>
+    private TransferRecord? _lastReceivedRecord;
+
+    /// <summary>傳輸結束時呼叫:寫入傳輸紀錄;接收成功的話把傳輸卡片切成「完成」狀態並提供開啟按鈕,
+    /// 其他情況(傳送完成、失敗、取消)收起卡片,結果由 Snackbar 告知。</summary>
+    private void CompleteTransfer(TransferRecord record)
+    {
+        _transferHistory.Insert(0, record);
+
+        if (!record.CanOpen)
+        {
+            HideFileTransferPanel();
+            return;
+        }
+
+        _lastReceivedRecord = record;
+        FileTransferNameText.Text = record.Name;
+        FileTransferIcon.Kind = PackIconKind.CheckCircle;
+        FileTransferProgressBar.Visibility = Visibility.Collapsed;
+        FileTransferStatusText.Text = $"已儲存到 {(record.IsFolder ? record.SavedPath : Path.GetDirectoryName(record.SavedPath))}";
+        OpenReceivedButtonText.Text = record.IsFolder ? "開啟資料夾" : "開啟檔案";
+        ShowReceivedInFolderButton.Visibility = record.IsFolder ? Visibility.Collapsed : Visibility.Visible;
+        FileTransferDoneActions.Visibility = Visibility.Visible;
+        CancelFileTransferButton.Visibility = Visibility.Collapsed;
+        DismissFileTransferButton.Visibility = Visibility.Visible;
+        FileTransferCard.Visibility = Visibility.Visible;
+    }
+
+    private void DismissFileTransferButton_Click(object sender, RoutedEventArgs e) => HideFileTransferPanel();
+
+    private void OpenReceivedButton_Click(object sender, RoutedEventArgs e)
+    {
+        if (_lastReceivedRecord != null)
+        {
+            OpenTransferRecord(_lastReceivedRecord);
+        }
+    }
+
+    private void ShowReceivedInFolderButton_Click(object sender, RoutedEventArgs e)
+    {
+        if (_lastReceivedRecord != null)
+        {
+            ShowTransferRecordInFolder(_lastReceivedRecord);
+        }
+    }
+
+    private void OpenTransferRecordButton_Click(object sender, RoutedEventArgs e)
+    {
+        if (sender is Button { Tag: TransferRecord record })
+        {
+            OpenTransferRecord(record);
+        }
+    }
+
+    private void ShowTransferRecordInFolderButton_Click(object sender, RoutedEventArgs e)
+    {
+        if (sender is Button { Tag: TransferRecord record })
+        {
+            ShowTransferRecordInFolder(record);
+        }
+    }
+
+    /// <summary>用系統預設的程式開啟收到的檔案(資料夾則用檔案總管開啟)。</summary>
+    private void OpenTransferRecord(TransferRecord record)
+    {
+        if (record.SavedPath is not { } path || !(record.IsFolder ? Directory.Exists(path) : File.Exists(path)))
+        {
+            MainSnackbar.MessageQueue?.Enqueue("找不到這個檔案,可能已經被移動或刪除。");
+            return;
+        }
+
+        TryStartShell(path);
+    }
+
+    /// <summary>開啟檔案總管並選取收到的檔案(資料夾則直接開啟該資料夾)。</summary>
+    private void ShowTransferRecordInFolder(TransferRecord record)
+    {
+        if (record.SavedPath is not { } path)
+        {
+            return;
+        }
+
+        if (record.IsFolder)
+        {
+            OpenTransferRecord(record);
+            return;
+        }
+
+        if (!File.Exists(path))
+        {
+            MainSnackbar.MessageQueue?.Enqueue("找不到這個檔案,可能已經被移動或刪除。");
+            return;
+        }
+
+        try
+        {
+            Process.Start(new ProcessStartInfo("explorer.exe", $"/select,\"{path}\"") { UseShellExecute = true });
+        }
+        catch (Exception ex)
+        {
+            AppendLog($"無法開啟檔案總管:{ex.Message}");
+        }
+    }
+
+    private void TryStartShell(string path)
+    {
+        try
+        {
+            Process.Start(new ProcessStartInfo(path) { UseShellExecute = true });
+        }
+        catch (Exception ex)
+        {
+            MainSnackbar.MessageQueue?.Enqueue("沒有可以開啟這個檔案的程式。");
+            AppendLog($"無法開啟「{path}」:{ex.Message}");
+        }
     }
 
     private void OnFileOffered(object? sender, FileOfferedEventArgs e)
@@ -167,7 +301,14 @@ public partial class MainWindow
     {
         Dispatcher.BeginInvoke(() =>
         {
-            FileTransferCard.Visibility = Visibility.Collapsed;
+            CompleteTransfer(new TransferRecord
+            {
+                Direction = e.Direction,
+                Reason = e.Reason,
+                Name = e.FileName,
+                SavedPath = e.SavedFilePath,
+                IsFolder = false,
+            });
 
             var message = e.Reason switch
             {
@@ -190,7 +331,14 @@ public partial class MainWindow
     {
         Dispatcher.BeginInvoke(() =>
         {
-            FileTransferCard.Visibility = Visibility.Collapsed;
+            CompleteTransfer(new TransferRecord
+            {
+                Direction = e.Direction,
+                Reason = e.Reason,
+                Name = e.IsBatch ? $"{e.EntryCount} 個檔案" : e.FolderName,
+                SavedPath = e.SavedFolderPath,
+                IsFolder = true,
+            });
 
             var message = e.IsBatch
                 ? e.Reason switch

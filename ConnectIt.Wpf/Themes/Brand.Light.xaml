@@ -1,0 +1,28 @@
+<ResourceDictionary xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+                    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
+    <!-- 淺色模式的品牌表面/文字色(Aurora 設計系統),key 必須跟 Brand.Dark.xaml 完全一致。 -->
+    <Color x:Key="Brand.Color.Background">#F5F7FF</Color>
+    <Color x:Key="Brand.Color.Surface">#FFFFFF</Color>
+    <Color x:Key="Brand.Color.SurfaceVariant">#EEF1FB</Color>
+    <Color x:Key="Brand.Color.Outline">#DDE2F0</Color>
+    <Color x:Key="Brand.Color.Text">#111827</Color>
+    <Color x:Key="Brand.Color.TextMuted">#5B6478</Color>
+
+    <SolidColorBrush x:Key="Brand.Brush.Background" Color="#F5F7FF"/>
+    <SolidColorBrush x:Key="Brand.Brush.Surface" Color="#FFFFFF"/>
+    <SolidColorBrush x:Key="Brand.Brush.SurfaceVariant" Color="#EEF1FB"/>
+    <SolidColorBrush x:Key="Brand.Brush.SurfaceHover" Color="#F0F2FD"/>
+    <SolidColorBrush x:Key="Brand.Brush.Outline" Color="#DDE2F0"/>
+    <SolidColorBrush x:Key="Brand.Brush.Text" Color="#111827"/>
+    <SolidColorBrush x:Key="Brand.Brush.TextMuted" Color="#5B6478"/>
+    <SolidColorBrush x:Key="Brand.Brush.Primary" Color="#4F46E5"/>
+    <SolidColorBrush x:Key="Brand.Brush.PrimarySoft" Color="#E6E7FD"/>
+    <SolidColorBrush x:Key="Brand.Brush.AccentSoft" Color="#DDF6FB"/>
+    <SolidColorBrush x:Key="Brand.Brush.Scrim" Color="#99101828"/>
+
+    <LinearGradientBrush x:Key="Brand.Brush.HeroBackground" StartPoint="0,0" EndPoint="1,1">
+        <GradientStop Color="#6366F1" Offset="0"/>
+        <GradientStop Color="#4F7FEA" Offset="0.55"/>
+        <GradientStop Color="#22B8D6" Offset="1"/>
+    </LinearGradientBrush>
+</ResourceDictionary>

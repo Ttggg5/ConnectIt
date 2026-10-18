@@ -4,19 +4,28 @@
         xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
         xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
         xmlns:local="clr-namespace:ConnectIt.Wpf"
+        xmlns:conv="clr-namespace:ConnectIt.Wpf.Converters"
         xmlns:materialDesign="http://materialdesigninxaml.net/winfx/xaml/themes"
         xmlns:wv2="clr-namespace:Microsoft.Web.WebView2.Wpf;assembly=Microsoft.Web.WebView2.Wpf"
         mc:Ignorable="d"
-        Title="ConnectIt" Height="600" Width="840"
+        Title="ConnectIt" Height="720" Width="1120"
         Icon="Assets/AppIcon.ico"
-        MinHeight="500" MinWidth="660"
+        MinHeight="600" MinWidth="880"
         WindowStartupLocation="CenterScreen"
-        Background="{DynamicResource MaterialDesignPaper}"
-        TextElement.Foreground="{DynamicResource MaterialDesignBody}"
+        Background="{DynamicResource Brand.Brush.Background}"
+        Foreground="{DynamicResource Brand.Brush.Text}"
+        TextElement.Foreground="{DynamicResource Brand.Brush.Text}"
         TextElement.FontWeight="Regular"
         TextElement.FontSize="13"
-        FontFamily="{DynamicResource MaterialDesignFont}">
-    <materialDesign:DialogHost x:Name="RootDialogHost" Identifier="RootDialog">
+        FontFamily="{StaticResource Brand.Font}">
+    <Window.Resources>
+        <conv:StringEqualsMultiConverter x:Key="StringEqualsMulti"/>
+        <conv:IsNotNullConverter x:Key="IsNotNull"/>
+        <conv:BoolToVisibilityConverter x:Key="BoolToVisibility"/>
+    </Window.Resources>
+
+    <materialDesign:DialogHost x:Name="RootDialogHost" Identifier="RootDialog" DialogBackground="Transparent"
+                               OverlayBackground="{DynamicResource Brand.Brush.Scrim}">
         <Grid>
             <Grid.ColumnDefinitions>
                 <ColumnDefinition Width="Auto"/>
@@ -24,100 +33,154 @@
             </Grid.ColumnDefinitions>
 
             <!-- ===================== 導覽列 ===================== -->
-            <materialDesign:ColorZone x:Name="NavColorZone" Grid.Column="0" Mode="PrimaryMid" CornerRadius="10" Margin="16"
-                                      SizeChanged="NavColorZone_SizeChanged">
-                <StackPanel Width="84">
+            <Border x:Name="NavColorZone" Grid.Column="0" Width="96" Margin="12"
+                    Background="{DynamicResource Brand.Brush.Surface}"
+                    BorderBrush="{DynamicResource Brand.Brush.Outline}" BorderThickness="1" CornerRadius="24">
+                <DockPanel Margin="10,16">
+                    <StackPanel DockPanel.Dock="Top" Margin="0,0,0,24" HorizontalAlignment="Center">
+                        <Border Width="48" Height="48" CornerRadius="16" Background="{StaticResource Brand.Brush.Gradient}">
+                            <materialDesign:PackIcon Kind="LanConnect" Width="26" Height="26" Foreground="White"
+                                                      HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                        </Border>
+                        <TextBlock Text="ConnectIt" FontSize="11" FontWeight="SemiBold" Margin="0,8,0,0"
+                                   HorizontalAlignment="Center" Foreground="{DynamicResource Brand.Brush.TextMuted}"/>
+                    </StackPanel>
+
                     <ListBox x:Name="NavListBox" AutomationProperties.AutomationId="NavListBox"
                              Background="Transparent" BorderThickness="0"
+                             ItemContainerStyle="{StaticResource Brand.NavItem}"
                              ScrollViewer.HorizontalScrollBarVisibility="Disabled"
                              SelectionChanged="NavListBox_SelectionChanged">
-                        <ListBoxItem AutomationProperties.AutomationId="NavDevicesItem" HorizontalContentAlignment="Center">
-                            <StackPanel Margin="0,8" HorizontalAlignment="Center">
-                                <materialDesign:PackIcon Kind="Devices" Width="24" Height="24" HorizontalAlignment="Center" Foreground="white"/>
-                                <TextBlock Text="裝置" FontSize="11" Margin="0,4,0,0" HorizontalAlignment="Center" Foreground="white"/>
+                        <ListBoxItem AutomationProperties.AutomationId="NavDevicesItem">
+                            <StackPanel HorizontalAlignment="Center">
+                                <materialDesign:PackIcon Kind="MonitorCellphone" Width="24" Height="24" HorizontalAlignment="Center"/>
+                                <TextBlock Text="裝置" FontSize="12" FontWeight="SemiBold" Margin="0,4,0,0" HorizontalAlignment="Center"/>
                             </StackPanel>
                         </ListBoxItem>
-                        <ListBoxItem AutomationProperties.AutomationId="NavVideoItem" HorizontalContentAlignment="Center">
-                            <StackPanel Margin="0,8" HorizontalAlignment="Center">
-                                <materialDesign:PackIcon Kind="VideoBox" Width="24" Height="24" HorizontalAlignment="Center" Foreground="white"/>
-                                <TextBlock Text="影片" FontSize="11" Margin="0,4,0,0" HorizontalAlignment="Center" Foreground="white"/>
+                        <ListBoxItem AutomationProperties.AutomationId="NavVideoItem">
+                            <StackPanel HorizontalAlignment="Center">
+                                <materialDesign:PackIcon Kind="PlayCircleOutline" Width="24" Height="24" HorizontalAlignment="Center"/>
+                                <TextBlock Text="影片" FontSize="12" FontWeight="SemiBold" Margin="0,4,0,0" HorizontalAlignment="Center"/>
                             </StackPanel>
                         </ListBoxItem>
-                        <ListBoxItem AutomationProperties.AutomationId="NavSettingsItem" HorizontalContentAlignment="Center">
-                            <StackPanel Margin="0,8" HorizontalAlignment="Center">
-                                <materialDesign:PackIcon Kind="Cog" Width="24" Height="24" HorizontalAlignment="Center" Foreground="white"/>
-                                <TextBlock Text="設定" FontSize="11" Margin="0,4,0,0" HorizontalAlignment="Center" Foreground="white"/>
+                        <ListBoxItem AutomationProperties.AutomationId="NavSettingsItem">
+                            <StackPanel HorizontalAlignment="Center">
+                                <materialDesign:PackIcon Kind="Cog" Width="24" Height="24" HorizontalAlignment="Center"/>
+                                <TextBlock Text="設定" FontSize="12" FontWeight="SemiBold" Margin="0,4,0,0" HorizontalAlignment="Center"/>
                             </StackPanel>
                         </ListBoxItem>
                     </ListBox>
-                </StackPanel>
-            </materialDesign:ColorZone>
+                </DockPanel>
+            </Border>
 
             <Grid Grid.Column="1">
-            <!-- ===================== 裝置探索畫面 ===================== -->
-            <Grid x:Name="DiscoveryViewRoot" Margin="16">
+            <!-- ===================== 裝置頁:搜尋清單 + 目前連線面板 ===================== -->
+            <Grid x:Name="DiscoveryViewRoot" Margin="4,12,12,12">
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="*"/>
+                    <ColumnDefinition x:Name="ConnectedPanelColumn" Width="0"/>
+                </Grid.ColumnDefinitions>
                 <Grid.RowDefinitions>
                     <RowDefinition Height="Auto"/>
                     <RowDefinition Height="Auto"/>
                     <RowDefinition Height="*"/>
-                    <RowDefinition Height="Auto"/>
                 </Grid.RowDefinitions>
 
-                <materialDesign:Card Grid.Row="0" Padding="16" Margin="0,0,0,12">
-                    <StackPanel Orientation="Horizontal">
-                        <materialDesign:PackIcon Kind="Laptop" Width="32" Height="32"
-                                                  VerticalAlignment="Center"
-                                                  Foreground="{DynamicResource MaterialDesign.Brush.Primary}"/>
-                        <StackPanel Margin="12,0,0,0" VerticalAlignment="Center">
-                            <TextBlock Text="ConnectIt" FontSize="20" FontWeight="Bold"/>
-                            <TextBlock Text="裝置探索與連線" Opacity="0.6" FontSize="12"/>
+                <!-- 這台裝置(Hero) -->
+                <Border Grid.Row="0" Grid.Column="0" Style="{StaticResource Brand.Hero}" Margin="0,0,0,20">
+                    <Grid>
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="Auto"/>
+                            <ColumnDefinition Width="*"/>
+                            <ColumnDefinition Width="Auto"/>
+                        </Grid.ColumnDefinitions>
+
+                        <Border Width="60" Height="60" CornerRadius="20" Background="{StaticResource Brand.Brush.GlassOnGradient}"
+                                VerticalAlignment="Center">
+                            <materialDesign:PackIcon Kind="Laptop" Width="30" Height="30"
+                                                      HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                        </Border>
+
+                        <StackPanel Grid.Column="1" Margin="18,0,12,0" VerticalAlignment="Center">
+                            <TextBlock Text="這台裝置" FontSize="12" FontWeight="SemiBold" Foreground="{StaticResource Brand.Brush.OnGradientMuted}"/>
+
+                            <!-- 顯示模式:名稱 + 編輯鈕 -->
+                            <StackPanel x:Name="DeviceNameDisplayPanel" Orientation="Horizontal" Margin="0,2,0,0">
+                                <TextBlock x:Name="DeviceNameText" Style="{StaticResource Brand.Text.Display}"
+                                           Foreground="{StaticResource Brand.Brush.OnGradient}"
+                                           TextTrimming="CharacterEllipsis" MaxWidth="420" VerticalAlignment="Center"/>
+                                <Button x:Name="EditDeviceNameButton" AutomationProperties.AutomationId="EditDeviceNameButton"
+                                        Style="{StaticResource Brand.Button.Icon.OnGradient}" Width="32" Height="32" Margin="10,0,0,0"
+                                        ToolTip="修改裝置名稱" Click="EditDeviceNameButton_Click">
+                                    <materialDesign:PackIcon Kind="Pencil" Width="16" Height="16"/>
+                                </Button>
+                            </StackPanel>
+
+                            <!-- 編輯模式:輸入框 + 儲存/取消 -->
+                            <StackPanel x:Name="DeviceNameEditPanel" Orientation="Horizontal" Margin="0,4,0,0" Visibility="Collapsed">
+                                <Border Background="{DynamicResource Brand.Brush.Surface}" CornerRadius="12" Padding="10,2">
+                                    <TextBox x:Name="DeviceNameTextBox" AutomationProperties.AutomationId="DeviceNameTextBox"
+                                             Width="260" FontSize="16" MaxLength="40"
+                                             Foreground="{DynamicResource Brand.Brush.Text}" CaretBrush="{DynamicResource Brand.Brush.Primary}"
+                                             materialDesign:TextFieldAssist.CharacterCounterVisibility="Collapsed"
+                                             materialDesign:HintAssist.Hint="裝置名稱"
+                                             materialDesign:TextFieldAssist.DecorationVisibility="Hidden"
+                                             BorderThickness="0" VerticalContentAlignment="Center"
+                                             KeyDown="DeviceNameTextBox_KeyDown"/>
+                                </Border>
+                                <Button Style="{StaticResource Brand.Button.Icon.OnGradient}" Margin="8,0,0,0" ToolTip="儲存(Enter)"
+                                        Click="SaveDeviceNameButton_Click">
+                                    <materialDesign:PackIcon Kind="Check" Width="18" Height="18"/>
+                                </Button>
+                                <Button Style="{StaticResource Brand.Button.Icon.OnGradient}" Margin="6,0,0,0" ToolTip="取消(Esc)"
+                                        Click="CancelDeviceNameButton_Click">
+                                    <materialDesign:PackIcon Kind="Close" Width="18" Height="18"/>
+                                </Button>
+                            </StackPanel>
+
+                            <StackPanel Orientation="Horizontal" Margin="0,10,0,0">
+                                <Border Style="{StaticResource Brand.Pill.OnGradient}">
+                                    <StackPanel Orientation="Horizontal">
+                                        <Ellipse Style="{StaticResource Brand.BreathingDot}" Fill="#4ADE80" VerticalAlignment="Center"/>
+                                        <TextBlock Text="廣播中・區網內的裝置都看得到你" Margin="8,0,0,0" VerticalAlignment="Center"/>
+                                    </StackPanel>
+                                </Border>
+                            </StackPanel>
                         </StackPanel>
+                    </Grid>
+                </Border>
 
-                        <TextBox x:Name="DeviceNameTextBox"
-                                 materialDesign:HintAssist.Hint="裝置名稱"
-                                 Style="{StaticResource MaterialDesignOutlinedTextBox}"
-                                 Width="200" Margin="24,0,0,0" VerticalAlignment="Center"
-                                 KeyDown="DeviceNameTextBox_KeyDown"
-                                 LostFocus="DeviceNameTextBox_LostFocus"/>
-
-                        <materialDesign:Chip Content="廣播中" Margin="16,0,0,0" VerticalAlignment="Center"
-                                              Background="{DynamicResource MaterialDesign.Brush.Primary.Light}"
-                                              Foreground="white">
-                            <materialDesign:Chip.Icon>
-                                <materialDesign:PackIcon Kind="Wifi" Foreground="White"/>
-                            </materialDesign:Chip.Icon>
-                        </materialDesign:Chip>
-                    </StackPanel>
-                </materialDesign:Card>
-
-                <Grid Grid.Row="1" Margin="4,0,4,8">
+                <!-- 附近的裝置:標題列 -->
+                <Grid Grid.Row="1" Grid.Column="0" Margin="4,0,0,12">
                     <Grid.ColumnDefinitions>
                         <ColumnDefinition Width="*"/>
                         <ColumnDefinition Width="Auto"/>
                     </Grid.ColumnDefinitions>
-
                     <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
-                        <ProgressBar x:Name="SearchProgressBar"
+                        <TextBlock Text="附近的裝置" Style="{StaticResource Brand.Text.Title}" VerticalAlignment="Center"/>
+                        <ProgressBar x:Name="SearchProgressBar" Margin="14,0,0,0"
                                      Style="{StaticResource MaterialDesignCircularProgressBar}"
-                                     IsIndeterminate="True" Width="20" Height="20"/>
-                        <TextBlock x:Name="SearchStatusText" Text="正在搜尋裝置..."
-                                   Margin="12,0,0,0" VerticalAlignment="Center" Opacity="0.7"/>
+                                     IsIndeterminate="True" Width="16" Height="16"/>
+                        <TextBlock x:Name="SearchStatusText" Text="正在搜尋..." Margin="8,0,0,0"
+                                   Style="{StaticResource Brand.Text.Caption}" VerticalAlignment="Center"/>
                     </StackPanel>
-
                     <Button x:Name="RefreshButton" AutomationProperties.AutomationId="RefreshButton" Grid.Column="1"
-                            Style="{StaticResource MaterialDesignIconButton}"
-                            ToolTip="重新搜尋裝置" Visibility="Collapsed"
-                            Click="RefreshButton_Click">
-                        <materialDesign:PackIcon Kind="Refresh" Width="22" Height="22"/>
+                            Style="{StaticResource Brand.Button.Ghost}" Padding="12,7"
+                            ToolTip="清除清單並立即重新搜尋" Click="RefreshButton_Click">
+                        <StackPanel Orientation="Horizontal">
+                            <materialDesign:PackIcon Kind="Refresh" Width="16" Height="16" VerticalAlignment="Center"/>
+                            <TextBlock Text="重新搜尋" Margin="6,0,0,0" VerticalAlignment="Center"/>
+                        </StackPanel>
                     </Button>
                 </Grid>
 
-                <Grid Grid.Row="2">
-                    <ScrollViewer VerticalScrollBarVisibility="Auto">
+                <!-- 附近的裝置:清單 / 空狀態 -->
+                <Grid Grid.Row="2" Grid.Column="0">
+                    <ScrollViewer VerticalScrollBarVisibility="Auto" Padding="0,0,4,0">
                         <ItemsControl x:Name="DevicesItemsControl">
                             <ItemsControl.ItemTemplate>
                                 <DataTemplate>
-                                    <materialDesign:Card Margin="4,4,4,4" Padding="12">
+                                    <Border Style="{StaticResource Brand.Card.Interactive}" Margin="0,0,0,10">
                                         <Grid>
                                             <Grid.ColumnDefinitions>
                                                 <ColumnDefinition Width="Auto"/>
@@ -125,271 +188,685 @@
                                                 <ColumnDefinition Width="Auto"/>
                                             </Grid.ColumnDefinitions>
 
-                                            <materialDesign:PackIcon Grid.Column="0" Kind="Devices"
-                                                                      Width="28" Height="28"
-                                                                      VerticalAlignment="Center"
-                                                                      Foreground="{DynamicResource MaterialDesign.Brush.Primary}"/>
+                                            <Border Style="{StaticResource Brand.Avatar}">
+                                                <materialDesign:PackIcon Kind="Devices" Width="22" Height="22"
+                                                                          HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                                            </Border>
 
-                                            <StackPanel Grid.Column="1" Margin="12,0" VerticalAlignment="Center">
-                                                <TextBlock Text="{Binding DisplayName}" FontWeight="Medium" FontSize="15"/>
-                                                <TextBlock Opacity="0.6" FontSize="11">
-                                                    <Run Text="{Binding Address, Mode=OneWay}"/>
-                                                    <Run Text=":"/>
-                                                    <Run Text="{Binding Port, Mode=OneWay}"/>
+                                            <StackPanel Grid.Column="1" Margin="14,0" VerticalAlignment="Center">
+                                                <TextBlock Text="{Binding DisplayName}" Style="{StaticResource Brand.Text.Section}"
+                                                           TextTrimming="CharacterEllipsis"/>
+                                                <TextBlock Style="{StaticResource Brand.Text.Caption}" Margin="0,2,0,0">
+                                                    <Run Text="{Binding Address, Mode=OneWay}"/><Run Text=":"/><Run Text="{Binding Port, Mode=OneWay}"/>
                                                 </TextBlock>
                                             </StackPanel>
 
-                                            <Button Grid.Column="2"
-                                                    AutomationProperties.AutomationId="ConnectButton"
-                                                    Style="{StaticResource MaterialDesignRaisedLightButton}"
-                                                    Tag="{Binding}"
-                                                    Click="ConnectToDevice_Click">
-                                                <StackPanel Orientation="Horizontal">
-                                                    <materialDesign:PackIcon Kind="LanConnect" Margin="0,0,6,0" Foreground="white"/>
-                                                    <TextBlock Text="連線" Foreground="white"/>
-                                                </StackPanel>
-                                            </Button>
+                                            <Grid Grid.Column="2" VerticalAlignment="Center">
+                                                <Button x:Name="ConnectButton"
+                                                        AutomationProperties.AutomationId="ConnectButton"
+                                                        Style="{StaticResource Brand.Button.Gradient}"
+                                                        Tag="{Binding}"
+                                                        Click="ConnectToDevice_Click">
+                                                    <StackPanel Orientation="Horizontal">
+                                                        <materialDesign:PackIcon Kind="LanConnect" Margin="0,0,6,0" VerticalAlignment="Center"/>
+                                                        <TextBlock Text="連線" VerticalAlignment="Center"/>
+                                                    </StackPanel>
+                                                </Button>
+                                                <Border x:Name="ConnectedPill" Style="{StaticResource Brand.Pill.Success}" Visibility="Collapsed">
+                                                    <StackPanel Orientation="Horizontal">
+                                                        <materialDesign:PackIcon Kind="CheckCircle" Width="14" Height="14" VerticalAlignment="Center"/>
+                                                        <TextBlock Text="已連線" Margin="6,0,0,0" VerticalAlignment="Center"/>
+                                                    </StackPanel>
+                                                </Border>
+                                            </Grid>
                                         </Grid>
-                                    </materialDesign:Card>
+                                    </Border>
+                                    <DataTemplate.Triggers>
+                                        <!-- 已經跟別台裝置連線時(一次只能一條連線),其他裝置的「連線」先停用。 -->
+                                        <DataTrigger Binding="{Binding Tag, RelativeSource={RelativeSource AncestorType=ItemsControl}, Converter={StaticResource IsNotNull}}" Value="True">
+                                            <Setter TargetName="ConnectButton" Property="IsEnabled" Value="False"/>
+                                            <Setter TargetName="ConnectButton" Property="ToolTip" Value="請先中斷目前的連線"/>
+                                        </DataTrigger>
+                                        <!-- 目前連線中的那台裝置:按鈕換成「已連線」標籤。 -->
+                                        <DataTrigger Value="True">
+                                            <DataTrigger.Binding>
+                                                <MultiBinding Converter="{StaticResource StringEqualsMulti}">
+                                                    <Binding Path="Address"/>
+                                                    <Binding Path="Tag" RelativeSource="{RelativeSource AncestorType=ItemsControl}"/>
+                                                </MultiBinding>
+                                            </DataTrigger.Binding>
+                                            <Setter TargetName="ConnectButton" Property="Visibility" Value="Collapsed"/>
+                                            <Setter TargetName="ConnectedPill" Property="Visibility" Value="Visible"/>
+                                        </DataTrigger>
+                                    </DataTemplate.Triggers>
                                 </DataTemplate>
                             </ItemsControl.ItemTemplate>
                         </ItemsControl>
                     </ScrollViewer>
 
                     <StackPanel x:Name="EmptyStateStackPanel" HorizontalAlignment="Center" VerticalAlignment="Center"
-                                Visibility="Collapsed">
-                        <materialDesign:PackIcon Kind="Magnify" Width="48" Height="48" Opacity="0.3"
-                                                  HorizontalAlignment="Center"/>
-                        <TextBlock Text="尚未找到其他裝置" Opacity="0.5" Margin="0,8,0,0" HorizontalAlignment="Center"/>
+                                MaxWidth="360">
+                        <ContentControl Style="{StaticResource Brand.Radar}" HorizontalAlignment="Center">
+                            <materialDesign:PackIcon Kind="AccessPoint" Width="28" Height="28"/>
+                        </ContentControl>
+                        <TextBlock Text="正在搜尋附近的裝置…" Style="{StaticResource Brand.Text.Section}"
+                                   Margin="0,12,0,6" HorizontalAlignment="Center"/>
+                        <TextBlock Style="{StaticResource Brand.Text.Caption}" TextAlignment="Center"
+                                   Text="請確認另一台裝置和這台連到同一個 Wi-Fi(或區網),而且也開著 ConnectIt。找到後會自動出現在這裡。"/>
                     </StackPanel>
                 </Grid>
 
-                <Expander Grid.Row="3" Header="狀態紀錄" Margin="0,8,0,0">
-                    <TextBox x:Name="LogTextBox" AutomationProperties.AutomationId="LogTextBox"
-                             IsReadOnly="True" TextWrapping="Wrap" MaxHeight="120"
-                             VerticalScrollBarVisibility="Auto" FontFamily="Consolas" FontSize="11"
-                             BorderThickness="0" Background="Transparent"/>
-                </Expander>
+                <!-- ===================== 目前連線面板 ===================== -->
+                <Border x:Name="ConnectedViewRoot" AutomationProperties.AutomationId="ConnectedViewRoot"
+                        Grid.Column="1" Grid.Row="0" Grid.RowSpan="3" Margin="20,0,0,0"
+                        Style="{StaticResource Brand.Card}" Padding="0" Visibility="Collapsed"
+                        AllowDrop="True"
+                        DragEnter="ConnectedViewRoot_DragEnter" DragOver="ConnectedViewRoot_DragEnter"
+                        DragLeave="ConnectedViewRoot_DragLeave" Drop="ConnectedViewRoot_Drop">
+                    <Grid>
+                        <Grid.RowDefinitions>
+                            <RowDefinition Height="Auto"/>
+                            <RowDefinition Height="Auto"/>
+                            <RowDefinition Height="Auto"/>
+                            <RowDefinition Height="Auto"/>
+                            <RowDefinition Height="*"/>
+                            <RowDefinition Height="Auto"/>
+                        </Grid.RowDefinitions>
+
+                        <!-- 連線對象 -->
+                        <StackPanel Grid.Row="0" Margin="20,20,20,0">
+                            <TextBlock Text="目前連線" Style="{StaticResource Brand.Text.Overline}"/>
+                            <Grid Margin="0,14,0,0" HorizontalAlignment="Center">
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="Auto"/>
+                                    <ColumnDefinition Width="72"/>
+                                    <ColumnDefinition Width="Auto"/>
+                                </Grid.ColumnDefinitions>
+                                <Border Style="{StaticResource Brand.Avatar}" Width="52" Height="52" CornerRadius="26"
+                                        Background="{DynamicResource Brand.Brush.PrimarySoft}"
+                                        TextElement.Foreground="{DynamicResource Brand.Brush.Primary}">
+                                    <materialDesign:PackIcon Kind="Laptop" Width="24" Height="24" HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                                </Border>
+                                <Grid Grid.Column="1" VerticalAlignment="Center">
+                                    <Rectangle Height="3" RadiusX="1.5" RadiusY="1.5" Margin="6,0" Fill="{StaticResource Brand.Brush.GradientHorizontal}"/>
+                                    <Border Width="22" Height="22" CornerRadius="11" Background="{DynamicResource Brand.Brush.Surface}"
+                                            BorderBrush="{StaticResource Brand.Brush.Success}" BorderThickness="2">
+                                        <materialDesign:PackIcon Kind="Check" Width="12" Height="12" Foreground="{StaticResource Brand.Brush.Success}"
+                                                                  HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                                    </Border>
+                                </Grid>
+                                <Border Grid.Column="2" Style="{StaticResource Brand.Avatar}" Width="52" Height="52" CornerRadius="26">
+                                    <materialDesign:PackIcon Kind="Devices" Width="24" Height="24" HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                                </Border>
+                            </Grid>
+                            <TextBlock x:Name="ConnectedDeviceNameText" AutomationProperties.AutomationId="ConnectedDeviceNameText"
+                                       Style="{StaticResource Brand.Text.Title}" TextTrimming="CharacterEllipsis"
+                                       HorizontalAlignment="Center" Margin="0,12,0,2"/>
+                            <TextBlock x:Name="ConnectedDeviceAddressText" Style="{StaticResource Brand.Text.Caption}" HorizontalAlignment="Center"/>
+                        </StackPanel>
+
+                        <!-- 傳送區(拖放區) -->
+                        <Grid Grid.Row="1" Margin="20,18,20,0">
+                            <Rectangle RadiusX="16" RadiusY="16" StrokeThickness="1.5" StrokeDashArray="5 4"
+                                       Stroke="{DynamicResource Brand.Brush.Primary}" Fill="{DynamicResource Brand.Brush.PrimarySoft}" Opacity="0.9"/>
+                            <StackPanel Margin="16,18">
+                                <materialDesign:PackIcon Kind="FileUpload" Width="30" Height="30" HorizontalAlignment="Center"
+                                                          Foreground="{DynamicResource Brand.Brush.Primary}"/>
+                                <TextBlock Text="把檔案或資料夾拖曳到這裡" Style="{StaticResource Brand.Text.Section}"
+                                           HorizontalAlignment="Center" Margin="0,8,0,2"/>
+                                <TextBlock Text="或從下方選擇要傳送的項目" Style="{StaticResource Brand.Text.Caption}" HorizontalAlignment="Center"/>
+                                <UniformGrid Columns="2" Margin="0,14,0,0">
+                                    <Button x:Name="SendFileButton" AutomationProperties.AutomationId="SendFileButton"
+                                            Style="{StaticResource Brand.Button.Gradient}" Margin="0,0,6,0" Padding="10,10"
+                                            Click="SendFileButton_Click">
+                                        <StackPanel Orientation="Horizontal">
+                                            <materialDesign:PackIcon Kind="FileSend" Margin="0,0,6,0" VerticalAlignment="Center"/>
+                                            <TextBlock Text="傳送檔案" VerticalAlignment="Center"/>
+                                        </StackPanel>
+                                    </Button>
+                                    <Button x:Name="SendFolderButton" AutomationProperties.AutomationId="SendFolderButton"
+                                            Style="{StaticResource Brand.Button.Ghost}" Margin="6,0,0,0" Padding="10,10"
+                                            Background="{DynamicResource Brand.Brush.Surface}"
+                                            Click="SendFolderButton_Click">
+                                        <StackPanel Orientation="Horizontal">
+                                            <materialDesign:PackIcon Kind="FolderUpload" Margin="0,0,6,0" VerticalAlignment="Center"/>
+                                            <TextBlock Text="傳送資料夾" VerticalAlignment="Center"/>
+                                        </StackPanel>
+                                    </Button>
+                                </UniformGrid>
+                            </StackPanel>
+                        </Grid>
+
+                        <!-- 傳輸中 / 完成 -->
+                        <Border x:Name="FileTransferCard" Grid.Row="2" Margin="20,14,20,0" Padding="14"
+                                CornerRadius="16" Background="{DynamicResource Brand.Brush.SurfaceVariant}" Visibility="Collapsed">
+                            <StackPanel>
+                                <Grid>
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="Auto"/>
+                                        <ColumnDefinition Width="*"/>
+                                        <ColumnDefinition Width="Auto"/>
+                                    </Grid.ColumnDefinitions>
+                                    <materialDesign:PackIcon x:Name="FileTransferIcon" Kind="SwapVertical" Width="20" Height="20"
+                                                              Foreground="{DynamicResource Brand.Brush.Primary}" VerticalAlignment="Center"/>
+                                    <TextBlock x:Name="FileTransferNameText" Grid.Column="1" Margin="10,0"
+                                               FontWeight="SemiBold" TextTrimming="CharacterEllipsis" VerticalAlignment="Center"/>
+                                    <Button x:Name="CancelFileTransferButton" AutomationProperties.AutomationId="CancelFileTransferButton"
+                                            Grid.Column="2" Style="{StaticResource Brand.Button.Icon}" Width="30" Height="30"
+                                            ToolTip="取消傳輸" Click="CancelFileTransferButton_Click">
+                                        <materialDesign:PackIcon Kind="Close" Width="16" Height="16"/>
+                                    </Button>
+                                    <Button x:Name="DismissFileTransferButton" Grid.Column="2" Style="{StaticResource Brand.Button.Icon}"
+                                            Width="30" Height="30" ToolTip="關閉" Visibility="Collapsed" Click="DismissFileTransferButton_Click">
+                                        <materialDesign:PackIcon Kind="Close" Width="16" Height="16"/>
+                                    </Button>
+                                </Grid>
+                                <ProgressBar x:Name="FileTransferProgressBar" Style="{StaticResource Brand.ProgressBar}"
+                                             Margin="0,12,0,8" Minimum="0" Maximum="100"/>
+                                <TextBlock x:Name="FileTransferStatusText" Style="{StaticResource Brand.Text.Caption}"/>
+                                <StackPanel x:Name="FileTransferDoneActions" Orientation="Horizontal" Margin="0,10,0,0" Visibility="Collapsed">
+                                    <Button x:Name="OpenReceivedButton" Style="{StaticResource Brand.Button.Gradient}" Padding="12,7"
+                                            Click="OpenReceivedButton_Click">
+                                        <StackPanel Orientation="Horizontal">
+                                            <materialDesign:PackIcon Kind="OpenInNew" Width="16" Height="16" Margin="0,0,6,0" VerticalAlignment="Center"/>
+                                            <TextBlock x:Name="OpenReceivedButtonText" Text="開啟" VerticalAlignment="Center"/>
+                                        </StackPanel>
+                                    </Button>
+                                    <Button x:Name="ShowReceivedInFolderButton" Style="{StaticResource Brand.Button.Ghost}" Padding="12,7" Margin="8,0,0,0"
+                                            Click="ShowReceivedInFolderButton_Click">
+                                        <StackPanel Orientation="Horizontal">
+                                            <materialDesign:PackIcon Kind="FolderOpen" Width="16" Height="16" Margin="0,0,6,0" VerticalAlignment="Center"/>
+                                            <TextBlock Text="在資料夾中顯示" VerticalAlignment="Center"/>
+                                        </StackPanel>
+                                    </Button>
+                                </StackPanel>
+                            </StackPanel>
+                        </Border>
+
+                        <!-- 傳輸紀錄 -->
+                        <StackPanel Grid.Row="3" Orientation="Horizontal" Margin="20,18,20,8">
+                            <materialDesign:PackIcon Kind="History" Width="16" Height="16" Foreground="{DynamicResource Brand.Brush.TextMuted}"
+                                                      VerticalAlignment="Center"/>
+                            <TextBlock Text="這次連線的傳輸紀錄" Style="{StaticResource Brand.Text.Overline}" Margin="6,0,0,0" VerticalAlignment="Center"/>
+                        </StackPanel>
+                        <Grid Grid.Row="4" Margin="12,0,12,0">
+                            <ScrollViewer VerticalScrollBarVisibility="Auto">
+                                <ItemsControl x:Name="TransferHistoryItemsControl">
+                                    <ItemsControl.ItemTemplate>
+                                        <DataTemplate>
+                                            <Border x:Name="Row" CornerRadius="12" Padding="8,8" Background="Transparent">
+                                                <Grid>
+                                                    <Grid.ColumnDefinitions>
+                                                        <ColumnDefinition Width="Auto"/>
+                                                        <ColumnDefinition Width="*"/>
+                                                        <ColumnDefinition Width="Auto"/>
+                                                    </Grid.ColumnDefinitions>
+                                                    <Border x:Name="DirectionTile" Width="32" Height="32" CornerRadius="10"
+                                                            Background="{DynamicResource Brand.Brush.PrimarySoft}">
+                                                        <materialDesign:PackIcon x:Name="DirectionIcon" Kind="ArrowUp" Width="16" Height="16"
+                                                                                  Foreground="{DynamicResource Brand.Brush.Primary}"
+                                                                                  HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                                                    </Border>
+                                                    <StackPanel Grid.Column="1" Margin="10,0" VerticalAlignment="Center">
+                                                        <TextBlock Text="{Binding Name}" FontWeight="SemiBold" TextTrimming="CharacterEllipsis"/>
+                                                        <TextBlock Style="{StaticResource Brand.Text.Caption}" FontSize="11">
+                                                            <Run Text="{Binding StatusText, Mode=OneWay}"/><Run Text=" ・ "/><Run Text="{Binding TimeText, Mode=OneWay}"/>
+                                                        </TextBlock>
+                                                    </StackPanel>
+                                                    <StackPanel Grid.Column="2" Orientation="Horizontal"
+                                                                Visibility="{Binding CanOpen, Converter={StaticResource BoolToVisibility}}">
+                                                        <Button Style="{StaticResource Brand.Button.Icon}" Width="30" Height="30" ToolTip="開啟"
+                                                                Tag="{Binding}" Click="OpenTransferRecordButton_Click">
+                                                            <materialDesign:PackIcon Kind="OpenInNew" Width="15" Height="15"/>
+                                                        </Button>
+                                                        <Button Style="{StaticResource Brand.Button.Icon}" Width="30" Height="30" ToolTip="在資料夾中顯示"
+                                                                Tag="{Binding}" Click="ShowTransferRecordInFolderButton_Click">
+                                                            <materialDesign:PackIcon Kind="FolderOpen" Width="15" Height="15"/>
+                                                        </Button>
+                                                    </StackPanel>
+                                                </Grid>
+                                            </Border>
+                                            <DataTemplate.Triggers>
+                                                <DataTrigger Binding="{Binding IsReceived}" Value="True">
+                                                    <Setter TargetName="DirectionIcon" Property="Kind" Value="ArrowDown"/>
+                                                    <Setter TargetName="DirectionTile" Property="Background" Value="{DynamicResource Brand.Brush.AccentSoft}"/>
+                                                    <Setter TargetName="DirectionIcon" Property="Foreground" Value="{StaticResource Brand.Brush.Accent}"/>
+                                                </DataTrigger>
+                                                <DataTrigger Binding="{Binding Succeeded}" Value="False">
+                                                    <Setter TargetName="DirectionIcon" Property="Kind" Value="AlertCircleOutline"/>
+                                                    <Setter TargetName="DirectionIcon" Property="Foreground" Value="{StaticResource Brand.Brush.Warning}"/>
+                                                </DataTrigger>
+                                                <Trigger SourceName="Row" Property="IsMouseOver" Value="True">
+                                                    <Setter TargetName="Row" Property="Background" Value="{DynamicResource Brand.Brush.SurfaceVariant}"/>
+                                                </Trigger>
+                                            </DataTemplate.Triggers>
+                                        </DataTemplate>
+                                    </ItemsControl.ItemTemplate>
+                                </ItemsControl>
+                            </ScrollViewer>
+                            <TextBlock x:Name="TransferHistoryEmptyText" Style="{StaticResource Brand.Text.Caption}" Margin="8,4"
+                                       VerticalAlignment="Top" Text="還沒有傳輸紀錄。傳送或收到的檔案會列在這裡,收到的檔案可以直接開啟。"/>
+                        </Grid>
+
+                        <Button Grid.Row="5" AutomationProperties.AutomationId="DisconnectButton"
+                                Style="{StaticResource Brand.Button.Danger}" Margin="20,12,20,20" HorizontalAlignment="Stretch"
+                                Click="DisconnectButton_Click">
+                            <StackPanel Orientation="Horizontal">
+                                <materialDesign:PackIcon Kind="LanDisconnect" Margin="0,0,8,0" VerticalAlignment="Center"/>
+                                <TextBlock Text="中斷連線" VerticalAlignment="Center"/>
+                            </StackPanel>
+                        </Button>
+
+                        <Border x:Name="DropOverlay" Grid.RowSpan="6" CornerRadius="20" Visibility="Collapsed" IsHitTestVisible="False"
+                                Background="{StaticResource Brand.Brush.Gradient}" Opacity="0.94">
+                            <StackPanel VerticalAlignment="Center" HorizontalAlignment="Center">
+                                <materialDesign:PackIcon Kind="FileUpload" Width="56" Height="56" Foreground="White" HorizontalAlignment="Center"/>
+                                <TextBlock x:Name="DropOverlayText" Text="放開以傳送" Foreground="White" FontSize="18" FontWeight="SemiBold"
+                                           Margin="0,10,0,0" HorizontalAlignment="Center"/>
+                            </StackPanel>
+                        </Border>
+                    </Grid>
+                </Border>
             </Grid>
 
-            <!-- ===================== 已連線 / 功能畫面 ===================== -->
-            <Grid x:Name="ConnectedViewRoot" AutomationProperties.AutomationId="ConnectedViewRoot" Visibility="Collapsed"
-                  AllowDrop="True"
-                  DragEnter="ConnectedViewRoot_DragEnter" DragOver="ConnectedViewRoot_DragEnter"
-                  DragLeave="ConnectedViewRoot_DragLeave" Drop="ConnectedViewRoot_Drop">
+            <!-- ===================== 影片頁:觀看 / 分享 ===================== -->
+            <Grid x:Name="VideoViewRoot" AutomationProperties.AutomationId="VideoViewRoot" Margin="4,12,12,12" Visibility="Collapsed">
                 <Grid.RowDefinitions>
-                    <RowDefinition Height="*"/>
                     <RowDefinition Height="Auto"/>
+                    <RowDefinition Height="*"/>
                 </Grid.RowDefinitions>
 
-                <StackPanel Grid.Row="0" VerticalAlignment="Center" HorizontalAlignment="Center">
-                    <materialDesign:PackIcon Kind="CheckDecagram" Width="64" Height="64"
-                                              HorizontalAlignment="Center"
-                                              Foreground="{DynamicResource MaterialDesign.Brush.Primary}"/>
-                    <TextBlock x:Name="ConnectedDeviceNameText" AutomationProperties.AutomationId="ConnectedDeviceNameText"
-                               FontSize="22" FontWeight="Bold"
-                               HorizontalAlignment="Center" Margin="0,12,0,4"/>
-                    <TextBlock Text="已連線" Opacity="0.6" HorizontalAlignment="Center" Margin="0,0,0,20"/>
+                <Grid Grid.Row="0" Margin="4,4,0,18">
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="*"/>
+                        <ColumnDefinition Width="Auto"/>
+                    </Grid.ColumnDefinitions>
+                    <StackPanel VerticalAlignment="Center">
+                        <TextBlock Text="影片" Style="{StaticResource Brand.Text.Display}"/>
+                        <TextBlock Text="觀看區網內其他裝置分享的影片,或把這台電腦的影片分享出去。" Style="{StaticResource Brand.Text.Caption}" Margin="0,2,0,0"/>
+                    </StackPanel>
+                    <Border Grid.Column="1" Background="{DynamicResource Brand.Brush.SurfaceVariant}" CornerRadius="14" Padding="4"
+                            VerticalAlignment="Center">
+                        <StackPanel Orientation="Horizontal">
+                            <RadioButton x:Name="VideoWatchTabButton" AutomationProperties.AutomationId="VideoWatchTabButton"
+                                         Style="{StaticResource Brand.Segment}" GroupName="VideoTabs" IsChecked="True"
+                                         Checked="VideoTabButton_Checked">
+                                <StackPanel Orientation="Horizontal">
+                                    <materialDesign:PackIcon Kind="PlayCircleOutline" Width="16" Height="16" Margin="0,0,6,0" VerticalAlignment="Center"/>
+                                    <TextBlock Text="觀看" VerticalAlignment="Center"/>
+                                </StackPanel>
+                            </RadioButton>
+                            <RadioButton x:Name="VideoShareTabButton" AutomationProperties.AutomationId="VideoShareTabButton"
+                                         Style="{StaticResource Brand.Segment}" GroupName="VideoTabs"
+                                         Checked="VideoTabButton_Checked">
+                                <StackPanel Orientation="Horizontal">
+                                    <materialDesign:PackIcon Kind="AccessPoint" Width="16" Height="16" Margin="0,0,6,0" VerticalAlignment="Center"/>
+                                    <TextBlock Text="分享" VerticalAlignment="Center"/>
+                                    <Ellipse x:Name="VideoShareRunningDot" Style="{StaticResource Brand.BreathingDot}" Margin="8,0,0,0"
+                                             VerticalAlignment="Center" Visibility="Collapsed"/>
+                                </StackPanel>
+                            </RadioButton>
+                        </StackPanel>
+                    </Border>
+                </Grid>
 
-                    <StackPanel Orientation="Horizontal" HorizontalAlignment="Center">
-                        <Button x:Name="SendFileButton" AutomationProperties.AutomationId="SendFileButton"
-                                Style="{StaticResource MaterialDesignRaisedButton}"
-                                Height="Auto" Padding="20,10" Margin="0,0,12,0" Click="SendFileButton_Click">
-                            <StackPanel Orientation="Horizontal">
-                                <materialDesign:PackIcon Kind="FileSend" Margin="0,0,8,0"/>
-                                <TextBlock Text="傳送檔案"/>
+                <!-- ===== 觀看 ===== -->
+                <Grid x:Name="VideoWatchPanel" Grid.Row="1">
+                    <Grid.RowDefinitions>
+                        <RowDefinition Height="Auto"/>
+                        <RowDefinition Height="Auto"/>
+                        <RowDefinition Height="*"/>
+                    </Grid.RowDefinitions>
+
+                    <!-- 繼續觀看 -->
+                    <Border x:Name="ContinueWatchingCard" Grid.Row="0" Style="{StaticResource Brand.Hero}" Padding="20,16"
+                            Margin="0,0,0,18" Visibility="Collapsed">
+                        <Grid>
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="Auto"/>
+                                <ColumnDefinition Width="*"/>
+                                <ColumnDefinition Width="Auto"/>
+                            </Grid.ColumnDefinitions>
+                            <Border Width="48" Height="48" CornerRadius="16" Background="{StaticResource Brand.Brush.GlassOnGradient}">
+                                <materialDesign:PackIcon Kind="History" Width="24" Height="24" HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                            </Border>
+                            <StackPanel Grid.Column="1" Margin="16,0" VerticalAlignment="Center">
+                                <TextBlock Text="繼續觀看" FontSize="12" FontWeight="SemiBold" Foreground="{StaticResource Brand.Brush.OnGradientMuted}"/>
+                                <TextBlock x:Name="ContinueWatchingTitleText" FontSize="17" FontWeight="SemiBold" TextTrimming="CharacterEllipsis"/>
+                                <TextBlock x:Name="ContinueWatchingServerText" FontSize="12" Foreground="{StaticResource Brand.Brush.OnGradientMuted}"/>
                             </StackPanel>
-                        </Button>
-                        <Button x:Name="SendFolderButton" AutomationProperties.AutomationId="SendFolderButton"
-                                Style="{StaticResource MaterialDesignOutlinedButton}"
-                                Height="Auto" Padding="20,10" Margin="0,0,12,0" Click="SendFolderButton_Click">
-                            <StackPanel Orientation="Horizontal">
-                                <materialDesign:PackIcon Kind="FolderUpload" Margin="0,0,8,0"/>
-                                <TextBlock Text="傳送資料夾"/>
+                            <StackPanel Grid.Column="2" Orientation="Horizontal" VerticalAlignment="Center">
+                                <Button x:Name="ContinueWatchingButton" AutomationProperties.AutomationId="ContinueWatchingButton"
+                                        Style="{StaticResource Brand.Button.Glass}" Click="ContinueWatchingButton_Click">
+                                    <StackPanel Orientation="Horizontal">
+                                        <materialDesign:PackIcon Kind="Play" Margin="0,0,6,0" VerticalAlignment="Center"/>
+                                        <TextBlock Text="繼續" VerticalAlignment="Center"/>
+                                    </StackPanel>
+                                </Button>
+                                <Button Style="{StaticResource Brand.Button.Icon.OnGradient}" Margin="8,0,0,0" ToolTip="移除這筆紀錄"
+                                        Click="DismissContinueWatchingButton_Click">
+                                    <materialDesign:PackIcon Kind="Close" Width="16" Height="16"/>
+                                </Button>
                             </StackPanel>
-                        </Button>
-                        <Button AutomationProperties.AutomationId="DisconnectButton"
-                                Style="{StaticResource MaterialDesignOutlinedButton}"
-                                Height="Auto" Padding="20,10" Click="DisconnectButton_Click">
+                        </Grid>
+                    </Border>
+
+                    <StackPanel Grid.Row="1" Orientation="Horizontal" Margin="4,0,0,12">
+                        <TextBlock Text="區網內的影片伺服器" Style="{StaticResource Brand.Text.Title}" VerticalAlignment="Center"/>
+                    </StackPanel>
+
+                    <Grid Grid.Row="2">
+                        <ScrollViewer VerticalScrollBarVisibility="Auto" Padding="0,0,4,0">
+                            <ItemsControl x:Name="VideoServersItemsControl">
+                                <ItemsControl.ItemTemplate>
+                                    <DataTemplate>
+                                        <Border Style="{StaticResource Brand.Card.Interactive}" Margin="0,0,0,10">
+                                            <Grid>
+                                                <Grid.ColumnDefinitions>
+                                                    <ColumnDefinition Width="Auto"/>
+                                                    <ColumnDefinition Width="*"/>
+                                                    <ColumnDefinition Width="Auto"/>
+                                                </Grid.ColumnDefinitions>
+
+                                                <Border Style="{StaticResource Brand.Avatar}" CornerRadius="14">
+                                                    <materialDesign:PackIcon Kind="MovieOpenPlay" Width="22" Height="22"
+                                                                              HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                                                </Border>
+
+                                                <StackPanel Grid.Column="1" Margin="14,0" VerticalAlignment="Center">
+                                                    <TextBlock Text="{Binding DisplayName}" Style="{StaticResource Brand.Text.Section}" TextTrimming="CharacterEllipsis"/>
+                                                    <TextBlock Style="{StaticResource Brand.Text.Caption}" Margin="0,2,0,0">
+                                                        <Run Text="{Binding Address, Mode=OneWay}"/><Run Text=":"/><Run Text="{Binding Port, Mode=OneWay}"/>
+                                                    </TextBlock>
+                                                </StackPanel>
+
+                                                <Button Grid.Column="2"
+                                                        AutomationProperties.AutomationId="WatchVideoServerButton"
+                                                        Style="{StaticResource Brand.Button.Gradient}"
+                                                        Tag="{Binding}" VerticalAlignment="Center"
+                                                        Click="WatchVideoServer_Click">
+                                                    <StackPanel Orientation="Horizontal">
+                                                        <materialDesign:PackIcon Kind="Play" Margin="0,0,6,0" VerticalAlignment="Center"/>
+                                                        <TextBlock Text="觀看" VerticalAlignment="Center"/>
+                                                    </StackPanel>
+                                                </Button>
+                                            </Grid>
+                                        </Border>
+                                    </DataTemplate>
+                                </ItemsControl.ItemTemplate>
+                            </ItemsControl>
+                        </ScrollViewer>
+
+                        <StackPanel x:Name="VideoServersEmptyStateStackPanel" HorizontalAlignment="Center" VerticalAlignment="Center" MaxWidth="380">
+                            <ContentControl Style="{StaticResource Brand.Radar}" HorizontalAlignment="Center">
+                                <materialDesign:PackIcon Kind="MovieOpenPlay" Width="28" Height="28"/>
+                            </ContentControl>
+                            <TextBlock Text="正在尋找區網內的影片伺服器…" Style="{StaticResource Brand.Text.Section}"
+                                       Margin="0,12,0,6" HorizontalAlignment="Center"/>
+                            <TextBlock Style="{StaticResource Brand.Text.Caption}" TextAlignment="Center"
+                                       Text="其他裝置在 ConnectIt 的「分享」分頁開始分享影片後,就會自動出現在這裡。"/>
+                        </StackPanel>
+                    </Grid>
+                </Grid>
+
+                <!-- ===== 分享 ===== -->
+                <ScrollViewer x:Name="VideoSharePanel" Grid.Row="1" VerticalScrollBarVisibility="Auto" Visibility="Collapsed">
+                    <StackPanel>
+                        <Border Style="{StaticResource Brand.Card}" Margin="0,0,0,16">
+                            <StackPanel>
+                                <Grid>
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="Auto"/>
+                                        <ColumnDefinition Width="*"/>
+                                    </Grid.ColumnDefinitions>
+                                    <Border Style="{StaticResource Brand.Avatar}" Width="52" Height="52" CornerRadius="16">
+                                        <materialDesign:PackIcon Kind="AccessPoint" Width="26" Height="26" HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                                    </Border>
+                                    <StackPanel Grid.Column="1" Margin="16,0,0,0" VerticalAlignment="Center">
+                                        <TextBlock Text="影片伺服器" Style="{StaticResource Brand.Text.Title}"/>
+                                        <TextBlock x:Name="VideoServerStatusText" AutomationProperties.AutomationId="VideoServerStatusText"
+                                                   Text="尚未開啟" Style="{StaticResource Brand.Text.Caption}" Margin="0,2,0,0"/>
+                                    </StackPanel>
+                                </Grid>
+
+                                <TextBlock x:Name="VideoShareIdleHintText" Style="{StaticResource Brand.Text.Body}" Margin="0,16,0,0"
+                                           Foreground="{DynamicResource Brand.Brush.TextMuted}"
+                                           Text="選擇一部影片或一整個影片資料夾,這台電腦就會變成區網內的迷你影片網站。不需要先配對連線,其他裝置用 ConnectIt 或瀏覽器就能觀看。"/>
+
+                                <WrapPanel Margin="0,16,0,0">
+                                    <Button x:Name="ShareVideoFolderButton" AutomationProperties.AutomationId="ShareVideoFolderButton"
+                                            Style="{StaticResource Brand.Button.Gradient}" Margin="0,0,10,0" Click="ShareVideoFolderButton_Click">
+                                        <StackPanel Orientation="Horizontal">
+                                            <materialDesign:PackIcon Kind="FolderPlay" Margin="0,0,8,0" VerticalAlignment="Center"/>
+                                            <TextBlock Text="分享影片資料夾" VerticalAlignment="Center"/>
+                                        </StackPanel>
+                                    </Button>
+                                    <Button x:Name="StreamVideoButton" AutomationProperties.AutomationId="StreamVideoButton"
+                                            Style="{StaticResource Brand.Button.Ghost}" Margin="0,0,10,0" Click="StreamVideoButton_Click">
+                                        <StackPanel Orientation="Horizontal">
+                                            <materialDesign:PackIcon Kind="PlayCircleOutline" Margin="0,0,8,0" VerticalAlignment="Center"/>
+                                            <TextBlock Text="分享單一影片" VerticalAlignment="Center"/>
+                                        </StackPanel>
+                                    </Button>
+                                    <Button x:Name="StopVideoServerButton" AutomationProperties.AutomationId="StopVideoServerButton"
+                                            Style="{StaticResource Brand.Button.Danger}" Click="StopVideoServerButton_Click"
+                                            Visibility="Collapsed">
+                                        <StackPanel Orientation="Horizontal">
+                                            <materialDesign:PackIcon Kind="Stop" Margin="0,0,8,0" VerticalAlignment="Center"/>
+                                            <TextBlock Text="停止分享" VerticalAlignment="Center"/>
+                                        </StackPanel>
+                                    </Button>
+                                </WrapPanel>
+                            </StackPanel>
+                        </Border>
+
+                        <!-- 網址 / QR Code -->
+                        <Border x:Name="VideoShareInfoCard" Style="{StaticResource Brand.Card}" Margin="0,0,0,16" Visibility="Collapsed">
+                            <Grid>
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="*"/>
+                                    <ColumnDefinition Width="Auto"/>
+                                </Grid.ColumnDefinitions>
+                                <StackPanel VerticalAlignment="Center" Margin="0,0,20,0">
+                                    <StackPanel Orientation="Horizontal">
+                                        <Border Style="{StaticResource Brand.IconTile}">
+                                            <materialDesign:PackIcon Kind="Web" Width="20" Height="20" HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                                        </Border>
+                                        <TextBlock Text="用瀏覽器觀看" Style="{StaticResource Brand.Text.Section}" Margin="12,0,0,0" VerticalAlignment="Center"/>
+                                    </StackPanel>
+                                    <TextBlock Style="{StaticResource Brand.Text.Caption}" Margin="0,10,0,12"
+                                               Text="同一區網的手機、平板或電腦,用瀏覽器打開這個網址(或用相機掃描右邊的 QR Code)就能觀看,不需要安裝 App。"/>
+                                    <Grid>
+                                        <Grid.ColumnDefinitions>
+                                            <ColumnDefinition Width="*"/>
+                                            <ColumnDefinition Width="Auto"/>
+                                        </Grid.ColumnDefinitions>
+                                        <Border Background="{DynamicResource Brand.Brush.SurfaceVariant}" CornerRadius="12" Padding="12,8">
+                                            <TextBox x:Name="VideoServerUrlTextBox" AutomationProperties.AutomationId="VideoServerUrlTextBox"
+                                                     IsReadOnly="True" BorderThickness="0" Background="Transparent" FontFamily="Consolas" FontSize="14"
+                                                     materialDesign:TextFieldAssist.DecorationVisibility="Hidden"
+                                                     Foreground="{DynamicResource Brand.Brush.Text}"/>
+                                        </Border>
+                                        <Button x:Name="CopyVideoServerUrlButton" Grid.Column="1" Style="{StaticResource Brand.Button.Ghost}" Margin="8,0,0,0"
+                                                Click="CopyVideoServerUrlButton_Click">
+                                            <StackPanel Orientation="Horizontal">
+                                                <materialDesign:PackIcon Kind="ContentCopy" Width="16" Height="16" Margin="0,0,6,0" VerticalAlignment="Center"/>
+                                                <TextBlock Text="複製" VerticalAlignment="Center"/>
+                                            </StackPanel>
+                                        </Button>
+                                    </Grid>
+                                </StackPanel>
+                                <Border Grid.Column="1" Background="White" CornerRadius="16" Padding="10" VerticalAlignment="Center">
+                                    <Image x:Name="VideoServerQrImage" Width="140" Height="140" RenderOptions.BitmapScalingMode="NearestNeighbor"/>
+                                </Border>
+                            </Grid>
+                        </Border>
+
+                        <!-- 遙控模式入口 -->
+                        <Border x:Name="RemoteControlCard" Style="{StaticResource Brand.Card}" Visibility="Collapsed">
+                            <Grid>
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="Auto"/>
+                                    <ColumnDefinition Width="*"/>
+                                    <ColumnDefinition Width="Auto"/>
+                                </Grid.ColumnDefinitions>
+                                <Border Style="{StaticResource Brand.IconTile}" Width="44" Height="44" CornerRadius="14">
+                                    <materialDesign:PackIcon Kind="RemoteDesktop" Width="22" Height="22" HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                                </Border>
+                                <StackPanel Grid.Column="1" Margin="14,0" VerticalAlignment="Center">
+                                    <TextBlock Text="遙控模式" Style="{StaticResource Brand.Text.Section}"/>
+                                    <TextBlock x:Name="RemoteControlCardStatusText" Style="{StaticResource Brand.Text.Caption}" Margin="0,2,0,0"
+                                               Text="讓所有觀看端同步播放你選的影片,適合一起看片或簡報。"/>
+                                </StackPanel>
+                                <Button x:Name="OpenRemoteControlButton" AutomationProperties.AutomationId="OpenRemoteControlButton"
+                                        Grid.Column="2" Style="{StaticResource Brand.Button.Gradient}" VerticalAlignment="Center"
+                                        Click="OpenRemoteControlButton_Click">
+                                    <StackPanel Orientation="Horizontal">
+                                        <TextBlock Text="開啟遙控面板" VerticalAlignment="Center"/>
+                                        <materialDesign:PackIcon Kind="ChevronRight" Margin="4,0,0,0" VerticalAlignment="Center"/>
+                                    </StackPanel>
+                                </Button>
+                            </Grid>
+                        </Border>
+                    </StackPanel>
+                </ScrollViewer>
+            </Grid>
+
+            <!-- ===================== 遙控面板(影片頁的子頁面) ===================== -->
+            <Grid x:Name="VideoRemoteControlRoot" AutomationProperties.AutomationId="VideoRemoteControlRoot"
+                  Margin="4,12,12,12" Visibility="Collapsed">
+                <Grid.RowDefinitions>
+                    <RowDefinition Height="Auto"/>
+                    <RowDefinition Height="*"/>
+                </Grid.RowDefinitions>
+
+                <Grid Grid.Row="0" Margin="0,0,0,16">
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="Auto"/>
+                        <ColumnDefinition Width="*"/>
+                        <ColumnDefinition Width="Auto"/>
+                    </Grid.ColumnDefinitions>
+                    <Button AutomationProperties.AutomationId="RemoteControlBackButton" Style="{StaticResource Brand.Button.Icon}"
+                            ToolTip="返回分享頁" Click="RemoteControlBackButton_Click" VerticalAlignment="Center">
+                        <materialDesign:PackIcon Kind="ArrowLeft" Width="22" Height="22"/>
+                    </Button>
+                    <StackPanel Grid.Column="1" Margin="10,0,0,0" VerticalAlignment="Center">
+                        <TextBlock Text="遙控模式" Style="{StaticResource Brand.Text.Title}"/>
+                        <TextBlock x:Name="RemoteControlSubtitleText" Style="{StaticResource Brand.Text.Caption}"/>
+                    </StackPanel>
+                    <Border Grid.Column="2" Style="{StaticResource Brand.Card}" Padding="14,6" CornerRadius="14" VerticalAlignment="Center">
+                        <StackPanel Orientation="Horizontal">
+                            <TextBlock x:Name="RemoteControlModeLabel" Text="遙控未啟用" FontWeight="SemiBold" VerticalAlignment="Center"/>
+                            <ToggleButton x:Name="RemoteControlModeToggle" AutomationProperties.AutomationId="RemoteControlModeToggle"
+                                          Margin="12,0,0,0" VerticalAlignment="Center"
+                                          Style="{StaticResource MaterialDesignSwitchToggleButton}"
+                                          Click="RemoteControlModeToggle_Click"/>
+                        </StackPanel>
+                    </Border>
+                </Grid>
+
+                <!-- 尚未啟用:介紹 -->
+                <ScrollViewer x:Name="RemoteControlIntroPanel" Grid.Row="1" VerticalScrollBarVisibility="Auto">
+                    <StackPanel MaxWidth="520" HorizontalAlignment="Center" Margin="0,16">
+                        <Border Width="96" Height="96" CornerRadius="32" Background="{StaticResource Brand.Brush.Gradient}" HorizontalAlignment="Center">
+                            <materialDesign:PackIcon Kind="RemoteDesktop" Width="46" Height="46" Foreground="White"
+                                                      HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                        </Border>
+                        <TextBlock Text="用這台電腦遙控所有觀看端" Style="{StaticResource Brand.Text.Title}" HorizontalAlignment="Center" Margin="0,20,0,8"/>
+                        <TextBlock Style="{StaticResource Brand.Text.Caption}" TextAlignment="Center" FontSize="13"
+                                   Text="啟用後,正在觀看的裝置只能觀看、無法自行操作,畫面會跟著這裡選的影片、播放進度、音量同步。"/>
+                        <Border Style="{StaticResource Brand.Card}" Margin="0,24,0,0">
+                            <StackPanel>
+                                <Grid Margin="0,0,0,14">
+                                    <Grid.ColumnDefinitions><ColumnDefinition Width="Auto"/><ColumnDefinition Width="*"/></Grid.ColumnDefinitions>
+                                    <Border Width="28" Height="28" CornerRadius="14" Background="{StaticResource Brand.Brush.Gradient}">
+                                        <TextBlock Text="1" Foreground="White" FontWeight="Bold" HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                                    </Border>
+                                    <TextBlock Grid.Column="1" Margin="12,0,0,0" VerticalAlignment="Center" Style="{StaticResource Brand.Text.Body}"
+                                               Text="請其他人在 ConnectIt「影片」頁或瀏覽器打開你的影片伺服器。"/>
+                                </Grid>
+                                <Grid Margin="0,0,0,14">
+                                    <Grid.ColumnDefinitions><ColumnDefinition Width="Auto"/><ColumnDefinition Width="*"/></Grid.ColumnDefinitions>
+                                    <Border Width="28" Height="28" CornerRadius="14" Background="{StaticResource Brand.Brush.Gradient}">
+                                        <TextBlock Text="2" Foreground="White" FontWeight="Bold" HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                                    </Border>
+                                    <TextBlock Grid.Column="1" Margin="12,0,0,0" VerticalAlignment="Center" Style="{StaticResource Brand.Text.Body}"
+                                               Text="按下「開始遙控」,觀看端會切換成同步播放畫面。"/>
+                                </Grid>
+                                <Grid>
+                                    <Grid.ColumnDefinitions><ColumnDefinition Width="Auto"/><ColumnDefinition Width="*"/></Grid.ColumnDefinitions>
+                                    <Border Width="28" Height="28" CornerRadius="14" Background="{StaticResource Brand.Brush.Gradient}">
+                                        <TextBlock Text="3" Foreground="White" FontWeight="Bold" HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                                    </Border>
+                                    <TextBlock Grid.Column="1" Margin="12,0,0,0" VerticalAlignment="Center" Style="{StaticResource Brand.Text.Body}"
+                                               Text="從影片庫點一部影片,用控制面板播放、暫停、快轉或切換下一部。"/>
+                                </Grid>
+                            </StackPanel>
+                        </Border>
+                        <Button x:Name="StartRemoteControlButton" AutomationProperties.AutomationId="StartRemoteControlButton"
+                                Style="{StaticResource Brand.Button.Gradient}" Margin="0,24,0,0" Padding="18,14"
+                                HorizontalAlignment="Stretch" Click="StartRemoteControlButton_Click">
                             <StackPanel Orientation="Horizontal">
-                                <materialDesign:PackIcon Kind="LanDisconnect" Margin="0,0,8,0"/>
-                                <TextBlock Text="中斷連線"/>
+                                <materialDesign:PackIcon Kind="Play" Margin="0,0,8,0" VerticalAlignment="Center"/>
+                                <TextBlock Text="開始遙控" FontSize="15" VerticalAlignment="Center"/>
                             </StackPanel>
                         </Button>
                     </StackPanel>
+                </ScrollViewer>
 
-                    <TextBlock Text="或把檔案/資料夾拖曳到這個視窗來傳送" Opacity="0.5" FontSize="11"
-                               Margin="0,12,0,0" HorizontalAlignment="Center"/>
-                </StackPanel>
+                <!-- 已啟用:影片庫 + 控制面板 -->
+                <Grid x:Name="RemoteControlDetailPanel" Grid.Row="1" Visibility="Collapsed">
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="*"/>
+                        <ColumnDefinition Width="360"/>
+                    </Grid.ColumnDefinitions>
 
-                <materialDesign:Card x:Name="FileTransferCard" Grid.Row="1" Margin="16" Padding="16" Visibility="Collapsed">
-                    <StackPanel>
-                        <Grid>
+                    <!-- 影片庫 -->
+                    <Grid Grid.Column="0" Margin="0,0,16,0">
+                        <Grid.RowDefinitions>
+                            <RowDefinition Height="Auto"/>
+                            <RowDefinition Height="Auto"/>
+                            <RowDefinition Height="*"/>
+                        </Grid.RowDefinitions>
+                        <Grid Grid.Row="0" Margin="0,0,0,10">
                             <Grid.ColumnDefinitions>
                                 <ColumnDefinition Width="*"/>
                                 <ColumnDefinition Width="Auto"/>
                             </Grid.ColumnDefinitions>
-                            <TextBlock x:Name="FileTransferNameText" Grid.Column="0"
-                                       FontWeight="Medium" TextTrimming="CharacterEllipsis" VerticalAlignment="Center"/>
-                            <Button x:Name="CancelFileTransferButton" AutomationProperties.AutomationId="CancelFileTransferButton"
-                                    Grid.Column="1" Style="{StaticResource MaterialDesignIconButton}"
-                                    ToolTip="取消傳輸" Click="CancelFileTransferButton_Click">
-                                <materialDesign:PackIcon Kind="Close" Width="18" Height="18"/>
-                            </Button>
+                            <Border Background="{DynamicResource Brand.Brush.Surface}" BorderBrush="{DynamicResource Brand.Brush.Outline}"
+                                    BorderThickness="1" CornerRadius="20" Padding="14,4">
+                                <Grid>
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="Auto"/>
+                                        <ColumnDefinition Width="*"/>
+                                    </Grid.ColumnDefinitions>
+                                    <materialDesign:PackIcon Kind="Magnify" Width="18" Height="18" VerticalAlignment="Center"
+                                                              Foreground="{DynamicResource Brand.Brush.TextMuted}"/>
+                                    <TextBox x:Name="RemoteControlSearchTextBox" Grid.Column="1" Margin="8,0,0,0"
+                                             materialDesign:HintAssist.Hint="搜尋影片名稱"
+                                             materialDesign:TextFieldAssist.DecorationVisibility="Hidden"
+                                             materialDesign:TextFieldAssist.HasClearButton="True"
+                                             BorderThickness="0" VerticalContentAlignment="Center"
+                                             TextChanged="RemoteControlSearchTextBox_TextChanged"/>
+                                </Grid>
+                            </Border>
+                            <ComboBox x:Name="RemoteControlSortComboBox" Grid.Column="1" Width="170" Margin="10,0,0,0" VerticalAlignment="Center"
+                                      ToolTip="排序方式" SelectionChanged="RemoteControlSortComboBox_SelectionChanged">
+                                <ComboBoxItem Tag="name_asc" Content="檔名(A→Z)"/>
+                                <ComboBoxItem Tag="name_desc" Content="檔名(Z→A)"/>
+                                <ComboBoxItem Tag="size_asc" Content="檔案大小(小→大)"/>
+                                <ComboBoxItem Tag="size_desc" Content="檔案大小(大→小)"/>
+                                <ComboBoxItem Tag="date_desc" Content="修改時間(新→舊)"/>
+                                <ComboBoxItem Tag="date_asc" Content="修改時間(舊→新)"/>
+                            </ComboBox>
                         </Grid>
-                        <ProgressBar x:Name="FileTransferProgressBar" Margin="0,8,0,4" Minimum="0" Maximum="100"/>
-                        <TextBlock x:Name="FileTransferStatusText" Opacity="0.6" FontSize="11"/>
-                    </StackPanel>
-                </materialDesign:Card>
-
-                <Border x:Name="DropOverlay" Grid.RowSpan="2" Background="#66000000" Visibility="Collapsed" IsHitTestVisible="False">
-                    <StackPanel VerticalAlignment="Center" HorizontalAlignment="Center">
-                        <materialDesign:PackIcon Kind="FileUpload" Width="48" Height="48" Foreground="White" HorizontalAlignment="Center"/>
-                        <TextBlock Text="放開以傳送" Foreground="White" FontSize="16" Margin="0,8,0,0" HorizontalAlignment="Center"/>
-                    </StackPanel>
-                </Border>
-            </Grid>
-
-            <!-- ===================== 影片伺服器畫面 ===================== -->
-            <Grid x:Name="VideoViewRoot" AutomationProperties.AutomationId="VideoViewRoot" Margin="16" Visibility="Collapsed">
-                <Grid.RowDefinitions>
-                    <RowDefinition Height="Auto"/>
-                    <RowDefinition Height="Auto"/>
-                    <RowDefinition Height="Auto"/>
-                    <RowDefinition Height="*"/>
-                </Grid.RowDefinitions>
-
-                <materialDesign:Card Grid.Row="0" Padding="16" Margin="0,0,0,12">
-                    <StackPanel>
-                        <StackPanel Orientation="Horizontal">
-                            <materialDesign:PackIcon Kind="VideoBox" Width="32" Height="32"
-                                                      VerticalAlignment="Center"
-                                                      Foreground="{DynamicResource MaterialDesign.Brush.Primary}"/>
-                            <StackPanel Margin="12,0,0,0" VerticalAlignment="Center">
-                                <TextBlock Text="影片伺服器" FontSize="20" FontWeight="Bold"/>
-                                <TextBlock x:Name="VideoServerStatusText" AutomationProperties.AutomationId="VideoServerStatusText"
-                                           Text="尚未開啟" Opacity="0.6" FontSize="12"/>
-                            </StackPanel>
+                        <StackPanel Grid.Row="1" Orientation="Horizontal" Margin="4,0,0,10">
+                            <CheckBox x:Name="RemoteControlShuffleCheckBox" Content="隨機播放"
+                                      VerticalAlignment="Center" Click="RemoteControlShuffleCheckBox_Click"/>
+                            <CheckBox x:Name="RemoteControlAutoplayCheckBox" Content="自動播放下一部" Margin="20,0,0,0"
+                                      VerticalAlignment="Center" Click="RemoteControlAutoplayCheckBox_Click"/>
                         </StackPanel>
-
-                        <StackPanel Orientation="Horizontal" Margin="0,16,0,0">
-                            <Button x:Name="StreamVideoButton" AutomationProperties.AutomationId="StreamVideoButton"
-                                    Style="{StaticResource MaterialDesignRaisedButton}"
-                                    Height="Auto" Padding="20,10" Margin="0,0,12,0" Click="StreamVideoButton_Click">
-                                <StackPanel Orientation="Horizontal">
-                                    <materialDesign:PackIcon Kind="PlayCircleOutline" Margin="0,0,8,0" Foreground="White"/>
-                                    <TextBlock Text="分享單一影片" Foreground="White"/>
-                                </StackPanel>
-                            </Button>
-                            <Button x:Name="ShareVideoFolderButton" AutomationProperties.AutomationId="ShareVideoFolderButton"
-                                    Style="{StaticResource MaterialDesignOutlinedButton}"
-                                    Height="Auto" Padding="20,10" Margin="0,0,12,0" Click="ShareVideoFolderButton_Click">
-                                <StackPanel Orientation="Horizontal">
-                                    <materialDesign:PackIcon Kind="FolderPlay" Margin="0,0,8,0"/>
-                                    <TextBlock Text="分享影片資料夾"/>
-                                </StackPanel>
-                            </Button>
-                            <Button x:Name="StopVideoServerButton" AutomationProperties.AutomationId="StopVideoServerButton"
-                                    Style="{StaticResource MaterialDesignOutlinedButton}"
-                                    Height="Auto" Padding="20,10" Click="StopVideoServerButton_Click"
-                                    Visibility="Collapsed">
-                                <StackPanel Orientation="Horizontal">
-                                    <materialDesign:PackIcon Kind="Stop" Margin="0,0,8,0"/>
-                                    <TextBlock Text="關閉影片伺服器"/>
-                                </StackPanel>
-                            </Button>
-                        </StackPanel>
-                    </StackPanel>
-                </materialDesign:Card>
-
-                <!-- ===================== 遙控模式(主機端控制面板) ===================== -->
-                <materialDesign:Card x:Name="RemoteControlCard" Grid.Row="1" Padding="16" Margin="0,0,0,12" Visibility="Collapsed">
-                    <StackPanel>
-                        <StackPanel Orientation="Horizontal" HorizontalAlignment="Stretch">
-                            <materialDesign:PackIcon Kind="RemoteDesktop" Width="24" Height="24" VerticalAlignment="Center"
-                                                      Foreground="{DynamicResource MaterialDesign.Brush.Primary}"/>
-                            <TextBlock Text="遙控模式" FontSize="16" FontWeight="Bold" Margin="12,0,0,0" VerticalAlignment="Center"/>
-                            <ToggleButton x:Name="RemoteControlModeToggle" Margin="16,0,0,0" VerticalAlignment="Center"
-                                          Style="{StaticResource MaterialDesignSwitchToggleButton}"
-                                          Click="RemoteControlModeToggle_Click"/>
-                            <TextBlock Text="開啟後,觀看端只能觀看、無法自行操作,畫面跟著這裡的指令同步。"
-                                       Opacity="0.6" FontSize="12" Margin="12,0,0,0" VerticalAlignment="Center"/>
-                        </StackPanel>
-
-                        <StackPanel x:Name="RemoteControlDetailPanel" Margin="0,12,0,0" Visibility="Collapsed">
-                            <StackPanel Orientation="Horizontal">
-                                <TextBlock x:Name="RemoteControlNowPlayingText" Text="尚未選擇影片" FontWeight="Medium" VerticalAlignment="Center"/>
-                            </StackPanel>
-                            <Slider x:Name="RemoteControlTimelineSlider" Margin="0,8,0,0"
-                                    Minimum="0" Maximum="1" Value="0" IsEnabled="False"
-                                    PreviewMouseLeftButtonDown="RemoteControlTimelineSlider_PreviewMouseLeftButtonDown"
-                                    PreviewMouseLeftButtonUp="RemoteControlTimelineSlider_PreviewMouseLeftButtonUp"/>
-                            <TextBlock x:Name="RemoteControlPositionText" Text="0:00" Opacity="0.6"/>
-                            <StackPanel Orientation="Horizontal" Margin="0,8,0,0" VerticalAlignment="Center">
-                                <Button x:Name="RemoteControlPreviousButton" Style="{StaticResource MaterialDesignIconButton}"
-                                        ToolTip="上一部" Click="RemoteControlPreviousButton_Click">
-                                    <materialDesign:PackIcon Kind="SkipPrevious"/>
-                                </Button>
-                                <Button x:Name="RemoteControlRewindButton" Style="{StaticResource MaterialDesignIconButton}"
-                                        ToolTip="倒退 10 秒" Click="RemoteControlRewindButton_Click">
-                                    <materialDesign:PackIcon Kind="Rewind10"/>
-                                </Button>
-                                <Button x:Name="RemoteControlPlayPauseButton" Style="{StaticResource MaterialDesignIconButton}"
-                                        ToolTip="播放/暫停" Click="RemoteControlPlayPauseButton_Click">
-                                    <materialDesign:PackIcon x:Name="RemoteControlPlayPauseIcon" Kind="Play"/>
-                                </Button>
-                                <Button x:Name="RemoteControlForwardButton" Style="{StaticResource MaterialDesignIconButton}"
-                                        ToolTip="快轉 10 秒" Click="RemoteControlForwardButton_Click">
-                                    <materialDesign:PackIcon Kind="FastForward10"/>
-                                </Button>
-                                <Button x:Name="RemoteControlNextButton" Style="{StaticResource MaterialDesignIconButton}"
-                                        ToolTip="下一部" Click="RemoteControlNextButton_Click">
-                                    <materialDesign:PackIcon Kind="SkipNext"/>
-                                </Button>
-
-                                <ComboBox x:Name="RemoteControlSpeedComboBox" Width="80" Margin="16,0,0,0" VerticalAlignment="Center"
-                                          ToolTip="播放速度" SelectionChanged="RemoteControlSpeedComboBox_SelectionChanged">
-                                    <ComboBoxItem Content="0.5x" Tag="0.5"/>
-                                    <ComboBoxItem Content="1x" Tag="1" IsSelected="True"/>
-                                    <ComboBoxItem Content="1.25x" Tag="1.25"/>
-                                    <ComboBoxItem Content="1.5x" Tag="1.5"/>
-                                    <ComboBoxItem Content="2x" Tag="2"/>
-                                </ComboBox>
-                            </StackPanel>
-
-                            <StackPanel Orientation="Horizontal" Margin="0,8,0,0" VerticalAlignment="Center">
-                                <Button x:Name="RemoteControlMuteButton" Style="{StaticResource MaterialDesignIconButton}"
-                                        ToolTip="靜音" Click="RemoteControlMuteButton_Click">
-                                    <materialDesign:PackIcon x:Name="RemoteControlMuteIcon" Kind="VolumeHigh"/>
-                                </Button>
-                                <Slider x:Name="RemoteControlVolumeSlider" Width="160" VerticalAlignment="Center"
-                                        Minimum="0" Maximum="1" Value="1" TickFrequency="0.05"
-                                        ValueChanged="RemoteControlVolumeSlider_ValueChanged"/>
-                            </StackPanel>
-
-                            <StackPanel Orientation="Horizontal" Margin="0,8,0,0" VerticalAlignment="Center">
-                                <ComboBox x:Name="RemoteControlSortComboBox" Width="180" VerticalAlignment="Center"
-                                          ToolTip="排序方式" SelectionChanged="RemoteControlSortComboBox_SelectionChanged">
-                                    <ComboBoxItem Tag="name_asc" Content="檔名(A→Z)"/>
-                                    <ComboBoxItem Tag="name_desc" Content="檔名(Z→A)"/>
-                                    <ComboBoxItem Tag="size_asc" Content="檔案大小(小→大)"/>
-                                    <ComboBoxItem Tag="size_desc" Content="檔案大小(大→小)"/>
-                                    <ComboBoxItem Tag="date_desc" Content="修改時間(新→舊)"/>
-                                    <ComboBoxItem Tag="date_asc" Content="修改時間(舊→新)"/>
-                                </ComboBox>
-                                <CheckBox x:Name="RemoteControlShuffleCheckBox" Content="隨機播放" Margin="16,0,0,0"
-                                          VerticalAlignment="Center" Click="RemoteControlShuffleCheckBox_Click"/>
-                                <CheckBox x:Name="RemoteControlAutoplayCheckBox" Content="自動播放下一部" Margin="16,0,0,0"
-                                          VerticalAlignment="Center" Click="RemoteControlAutoplayCheckBox_Click"/>
-                            </StackPanel>
-
-                            <StackPanel x:Name="RemoteControlAutoplayPanel" Orientation="Horizontal" Margin="0,8,0,0" Visibility="Collapsed">
-                                <TextBlock x:Name="RemoteControlAutoplayText" VerticalAlignment="Center"/>
-                                <Button Style="{StaticResource MaterialDesignFlatButton}" Content="取消" Margin="8,0,0,0"
-                                        Click="RemoteControlCancelAutoplayButton_Click"/>
-                            </StackPanel>
-
-                            <TextBlock Text="選一部影片開始遙控:" Opacity="0.6" FontSize="12" Margin="0,12,0,4"/>
+                        <ScrollViewer Grid.Row="2" VerticalScrollBarVisibility="Auto">
                             <ItemsControl x:Name="RemoteControlVideoListItemsControl">
                                 <ItemsControl.ItemsPanel>
                                     <ItemsPanelTemplate>
@@ -398,236 +875,364 @@
                                 </ItemsControl.ItemsPanel>
                                 <ItemsControl.ItemTemplate>
                                     <DataTemplate>
-                                        <Button Style="{StaticResource MaterialDesignOutlinedButton}"
-                                                Margin="0,0,8,8" Padding="12,6" Tag="{Binding}"
-                                                Click="RemoteControlVideoButton_Click">
-                                            <TextBlock Text="{Binding Name}" MaxWidth="200" TextTrimming="CharacterEllipsis"/>
+                                        <Button x:Name="VideoCardButton" Width="196" Height="Auto" Padding="0" Foreground="{DynamicResource Brand.Brush.Text}" Margin="0,0,12,12" Tag="{Binding Entry}" FocusVisualStyle="{x:Null}"
+                                                Click="RemoteControlVideoButton_Click" Cursor="Hand" ToolTip="{Binding Name}">
+                                            <Button.Template>
+                                                <ControlTemplate TargetType="Button">
+                                                    <Border x:Name="Card" Background="{DynamicResource Brand.Brush.Surface}"
+                                                            BorderBrush="{DynamicResource Brand.Brush.Outline}" BorderThickness="1" CornerRadius="16">
+                                                        <ContentPresenter/>
+                                                    </Border>
+                                                    <ControlTemplate.Triggers>
+                                                        <Trigger Property="IsMouseOver" Value="True">
+                                                            <Setter TargetName="Card" Property="BorderBrush" Value="{DynamicResource Brand.Brush.Primary}"/>
+                                                        </Trigger>
+                                                        <Trigger Property="Tag" Value="{x:Null}">
+                                                            <Setter TargetName="Card" Property="Opacity" Value="0.5"/>
+                                                        </Trigger>
+                                                    </ControlTemplate.Triggers>
+                                                </ControlTemplate>
+                                            </Button.Template>
+                                            <StackPanel>
+                                                <Grid Height="110">
+                                                    <Border CornerRadius="15,15,0,0" Background="{DynamicResource Brand.Brush.SurfaceVariant}"/>
+                                                    <materialDesign:PackIcon Kind="Movie" Width="30" Height="30" Opacity="0.4"
+                                                                              HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                                                    <Border CornerRadius="15,15,0,0" ClipToBounds="True">
+                                                        <Image Source="{Binding ThumbnailUrl}" Stretch="UniformToFill"/>
+                                                    </Border>
+                                                    <Border x:Name="NowPlayingBadge" Style="{StaticResource Brand.Pill}" Background="{StaticResource Brand.Brush.Gradient}"
+                                                            TextElement.Foreground="White" Margin="8" HorizontalAlignment="Left" VerticalAlignment="Top"
+                                                            Visibility="Collapsed">
+                                                        <StackPanel Orientation="Horizontal">
+                                                            <materialDesign:PackIcon Kind="Equalizer" Width="12" Height="12" VerticalAlignment="Center"/>
+                                                            <TextBlock Text="播放中" Margin="4,0,0,0" FontSize="11" VerticalAlignment="Center"/>
+                                                        </StackPanel>
+                                                    </Border>
+                                                </Grid>
+                                                <StackPanel Margin="12,10">
+                                                    <TextBlock x:Name="VideoName" Text="{Binding Name}" FontWeight="SemiBold" TextTrimming="CharacterEllipsis"/>
+                                                    <TextBlock Text="{Binding Folder}" Style="{StaticResource Brand.Text.Caption}" FontSize="11"
+                                                               TextTrimming="CharacterEllipsis" TextWrapping="NoWrap"/>
+                                                </StackPanel>
+                                            </StackPanel>
                                         </Button>
+                                        <DataTemplate.Triggers>
+                                            <DataTrigger Value="True">
+                                                <DataTrigger.Binding>
+                                                    <MultiBinding Converter="{StaticResource StringEqualsMulti}">
+                                                        <Binding Path="RelativePath"/>
+                                                        <Binding Path="Tag" RelativeSource="{RelativeSource AncestorType=ItemsControl}"/>
+                                                    </MultiBinding>
+                                                </DataTrigger.Binding>
+                                                <Setter TargetName="NowPlayingBadge" Property="Visibility" Value="Visible"/>
+                                                <Setter TargetName="VideoName" Property="Foreground" Value="{DynamicResource Brand.Brush.Primary}"/>
+                                            </DataTrigger>
+                                        </DataTemplate.Triggers>
                                     </DataTemplate>
                                 </ItemsControl.ItemTemplate>
                             </ItemsControl>
-                        </StackPanel>
-                    </StackPanel>
-                </materialDesign:Card>
+                        </ScrollViewer>
+                    </Grid>
 
-                <TextBlock Grid.Row="2" Text="區網內的影片伺服器" FontWeight="Medium" Margin="4,0,4,8"/>
+                    <!-- 控制面板 -->
+                    <Border Grid.Column="1" Style="{StaticResource Brand.Card}" Padding="0">
+                        <ScrollViewer VerticalScrollBarVisibility="Auto">
+                            <StackPanel Margin="20">
+                                <Border Style="{StaticResource Brand.Pill.Success}" HorizontalAlignment="Left">
+                                    <StackPanel Orientation="Horizontal">
+                                        <Ellipse Style="{StaticResource Brand.BreathingDot}" VerticalAlignment="Center"/>
+                                        <TextBlock Text="觀看端同步中" Margin="8,0,0,0" VerticalAlignment="Center"/>
+                                    </StackPanel>
+                                </Border>
 
-                <Grid Grid.Row="3">
-                    <ScrollViewer VerticalScrollBarVisibility="Auto">
-                        <ItemsControl x:Name="VideoServersItemsControl">
-                            <ItemsControl.ItemTemplate>
-                                <DataTemplate>
-                                    <materialDesign:Card Margin="4,4,4,4" Padding="12">
-                                        <Grid>
-                                            <Grid.ColumnDefinitions>
-                                                <ColumnDefinition Width="Auto"/>
-                                                <ColumnDefinition Width="*"/>
-                                                <ColumnDefinition Width="Auto"/>
-                                            </Grid.ColumnDefinitions>
+                                <Grid Height="176" Margin="0,14,0,0">
+                                    <Border CornerRadius="16" Background="{DynamicResource Brand.Brush.SurfaceVariant}"/>
+                                    <materialDesign:PackIcon Kind="MovieOpenPlay" Width="40" Height="40" Opacity="0.35"
+                                                              HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                                    <Border CornerRadius="16" ClipToBounds="True">
+                                        <Image x:Name="RemoteControlNowPlayingImage" Stretch="UniformToFill"/>
+                                    </Border>
+                                </Grid>
 
-                                            <materialDesign:PackIcon Grid.Column="0" Kind="VideoBox"
-                                                                      Width="28" Height="28"
-                                                                      VerticalAlignment="Center"
-                                                                      Foreground="{DynamicResource MaterialDesign.Brush.Primary}"/>
+                                <TextBlock Text="正在播放" Style="{StaticResource Brand.Text.Overline}" Margin="0,14,0,2"/>
+                                <TextBlock x:Name="RemoteControlNowPlayingText" Text="尚未選擇影片" Style="{StaticResource Brand.Text.Section}"
+                                           FontSize="16" TextWrapping="Wrap" MaxHeight="44" TextTrimming="CharacterEllipsis"/>
 
-                                            <StackPanel Grid.Column="1" Margin="12,0" VerticalAlignment="Center">
-                                                <TextBlock Text="{Binding DisplayName}" FontWeight="Medium" FontSize="15"/>
-                                                <TextBlock Opacity="0.6" FontSize="11">
-                                                    <Run Text="{Binding Address, Mode=OneWay}"/>
-                                                    <Run Text=":"/>
-                                                    <Run Text="{Binding Port, Mode=OneWay}"/>
-                                                </TextBlock>
-                                            </StackPanel>
+                                <Slider x:Name="RemoteControlTimelineSlider" Margin="0,14,0,0"
+                                        Minimum="0" Maximum="1" Value="0" IsEnabled="False"
+                                        PreviewMouseLeftButtonDown="RemoteControlTimelineSlider_PreviewMouseLeftButtonDown"
+                                        PreviewMouseLeftButtonUp="RemoteControlTimelineSlider_PreviewMouseLeftButtonUp"/>
+                                <TextBlock x:Name="RemoteControlPositionText" Text="0:00" Style="{StaticResource Brand.Text.Caption}"/>
 
-                                            <Button Grid.Column="2"
-                                                    AutomationProperties.AutomationId="WatchVideoServerButton"
-                                                    Style="{StaticResource MaterialDesignRaisedLightButton}"
-                                                    Tag="{Binding}"
-                                                    Click="WatchVideoServer_Click">
-                                                <StackPanel Orientation="Horizontal">
-                                                    <materialDesign:PackIcon Kind="Play" Margin="0,0,6,0" Foreground="white"/>
-                                                    <TextBlock Text="觀看" Foreground="white"/>
-                                                </StackPanel>
-                                            </Button>
-                                        </Grid>
-                                    </materialDesign:Card>
-                                </DataTemplate>
-                            </ItemsControl.ItemTemplate>
-                        </ItemsControl>
-                    </ScrollViewer>
+                                <Grid Margin="0,12,0,0" HorizontalAlignment="Center">
+                                    <StackPanel Orientation="Horizontal">
+                                        <Button x:Name="RemoteControlPreviousButton" Style="{StaticResource Brand.Button.Icon}" Width="42" Height="42"
+                                                ToolTip="上一部" Click="RemoteControlPreviousButton_Click" VerticalAlignment="Center">
+                                            <materialDesign:PackIcon Kind="SkipPrevious" Width="24" Height="24"/>
+                                        </Button>
+                                        <Button x:Name="RemoteControlRewindButton" Style="{StaticResource Brand.Button.Icon}" Width="42" Height="42" Margin="6,0"
+                                                ToolTip="倒退 10 秒" Click="RemoteControlRewindButton_Click" VerticalAlignment="Center">
+                                            <materialDesign:PackIcon Kind="Rewind10" Width="24" Height="24"/>
+                                        </Button>
+                                        <Button x:Name="RemoteControlPlayPauseButton" Style="{StaticResource Brand.Button.Play}"
+                                                ToolTip="播放/暫停" Click="RemoteControlPlayPauseButton_Click" Margin="4,0">
+                                            <materialDesign:PackIcon x:Name="RemoteControlPlayPauseIcon" Kind="Play" Width="32" Height="32"/>
+                                        </Button>
+                                        <Button x:Name="RemoteControlForwardButton" Style="{StaticResource Brand.Button.Icon}" Width="42" Height="42" Margin="6,0"
+                                                ToolTip="快轉 10 秒" Click="RemoteControlForwardButton_Click" VerticalAlignment="Center">
+                                            <materialDesign:PackIcon Kind="FastForward10" Width="24" Height="24"/>
+                                        </Button>
+                                        <Button x:Name="RemoteControlNextButton" Style="{StaticResource Brand.Button.Icon}" Width="42" Height="42"
+                                                ToolTip="下一部" Click="RemoteControlNextButton_Click" VerticalAlignment="Center">
+                                            <materialDesign:PackIcon Kind="SkipNext" Width="24" Height="24"/>
+                                        </Button>
+                                    </StackPanel>
+                                </Grid>
 
-                    <StackPanel x:Name="VideoServersEmptyStateStackPanel" HorizontalAlignment="Center" VerticalAlignment="Center">
-                        <materialDesign:PackIcon Kind="Magnify" Width="48" Height="48" Opacity="0.3"
-                                                  HorizontalAlignment="Center"/>
-                        <TextBlock Text="尚未找到影片伺服器" Opacity="0.5" Margin="0,8,0,0" HorizontalAlignment="Center"/>
-                    </StackPanel>
+                                <Border x:Name="RemoteControlAutoplayPanel" Margin="0,14,0,0" Padding="12,8" CornerRadius="12"
+                                        Background="{DynamicResource Brand.Brush.AccentSoft}" Visibility="Collapsed">
+                                    <Grid>
+                                        <Grid.ColumnDefinitions>
+                                            <ColumnDefinition Width="*"/>
+                                            <ColumnDefinition Width="Auto"/>
+                                        </Grid.ColumnDefinitions>
+                                        <TextBlock x:Name="RemoteControlAutoplayText" VerticalAlignment="Center" TextWrapping="Wrap"/>
+                                        <Button Grid.Column="1" Style="{StaticResource Brand.Button.Text}" Content="取消" Margin="8,0,0,0"
+                                                Click="RemoteControlCancelAutoplayButton_Click"/>
+                                    </Grid>
+                                </Border>
+
+                                <Rectangle Height="1" Fill="{DynamicResource Brand.Brush.Outline}" Margin="0,18"/>
+
+                                <TextBlock Text="播放速度" Style="{StaticResource Brand.Text.Overline}" Margin="0,0,0,4"/>
+                                <ComboBox x:Name="RemoteControlSpeedComboBox" HorizontalAlignment="Left" Width="120"
+                                          ToolTip="播放速度" SelectionChanged="RemoteControlSpeedComboBox_SelectionChanged">
+                                    <ComboBoxItem Content="0.5x" Tag="0.5"/>
+                                    <ComboBoxItem Content="1x" Tag="1" IsSelected="True"/>
+                                    <ComboBoxItem Content="1.25x" Tag="1.25"/>
+                                    <ComboBoxItem Content="1.5x" Tag="1.5"/>
+                                    <ComboBoxItem Content="2x" Tag="2"/>
+                                </ComboBox>
+
+                                <TextBlock Text="音量" Style="{StaticResource Brand.Text.Overline}" Margin="0,16,0,2"/>
+                                <Grid>
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="Auto"/>
+                                        <ColumnDefinition Width="*"/>
+                                    </Grid.ColumnDefinitions>
+                                    <Button x:Name="RemoteControlMuteButton" Style="{StaticResource Brand.Button.Icon}"
+                                            ToolTip="靜音" Click="RemoteControlMuteButton_Click">
+                                        <materialDesign:PackIcon x:Name="RemoteControlMuteIcon" Kind="VolumeHigh" Width="20" Height="20"/>
+                                    </Button>
+                                    <Slider x:Name="RemoteControlVolumeSlider" Grid.Column="1" Margin="8,0,0,0" VerticalAlignment="Center"
+                                            Minimum="0" Maximum="1" Value="1" TickFrequency="0.05"
+                                            ValueChanged="RemoteControlVolumeSlider_ValueChanged"/>
+                                </Grid>
+                            </StackPanel>
+                        </ScrollViewer>
+                    </Border>
                 </Grid>
             </Grid>
 
-            <!-- ===================== 設定畫面 ===================== -->
+            <!-- ===================== 設定頁 ===================== -->
             <Grid x:Name="SettingsViewRoot" AutomationProperties.AutomationId="SettingsViewRoot"
-                  Margin="16" Visibility="Collapsed" SizeChanged="SettingsViewRoot_SizeChanged">
+                  Margin="4,12,12,12" Visibility="Collapsed" SizeChanged="SettingsViewRoot_SizeChanged">
                 <ScrollViewer VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
                 <StackPanel VerticalAlignment="Top">
-                    <TextBlock Text="設定" FontSize="20" FontWeight="Bold" Margin="0,0,0,16"/>
+                    <TextBlock Text="設定" Style="{StaticResource Brand.Text.Display}" Margin="4,4,0,4"/>
+                    <TextBlock Text="變更會立即自動儲存。" Style="{StaticResource Brand.Text.Caption}" Margin="4,0,0,20"/>
 
                     <Grid x:Name="SettingsCardsHost" HorizontalAlignment="Left">
                     <Grid.ColumnDefinitions>
                         <ColumnDefinition Width="*"/>
                     </Grid.ColumnDefinitions>
-                    <materialDesign:Card x:Name="ThemeCard" Padding="16" Margin="0,0,0,16">
+
+                    <!-- 外觀 -->
+                    <Border x:Name="ThemeCard" Style="{StaticResource Brand.Card}" Margin="0,0,0,16">
                         <StackPanel>
-                            <TextBlock Text="主題外觀" FontWeight="Medium" FontSize="15"/>
-                            <TextBlock Text="選擇應用程式要使用的顏色主題。" Opacity="0.6" FontSize="12"
-                                       Margin="0,4,0,16" TextWrapping="Wrap"/>
-
-                            <RadioButton x:Name="ThemeLightRadioButton" GroupName="ThemeMode" Tag="Light"
-                                         AutomationProperties.AutomationId="ThemeLightRadioButton"
-                                         Checked="ThemeRadioButton_Checked" Margin="0,6">
-                                <StackPanel Orientation="Horizontal">
-                                    <materialDesign:PackIcon Kind="WeatherSunny" VerticalAlignment="Center"/>
-                                    <TextBlock Text="淺色" Margin="8,0,0,0" VerticalAlignment="Center"/>
-                                </StackPanel>
-                            </RadioButton>
-
-                            <RadioButton x:Name="ThemeDarkRadioButton" GroupName="ThemeMode" Tag="Dark"
-                                         AutomationProperties.AutomationId="ThemeDarkRadioButton"
-                                         Checked="ThemeRadioButton_Checked" Margin="0,6">
-                                <StackPanel Orientation="Horizontal">
-                                    <materialDesign:PackIcon Kind="WeatherNight" VerticalAlignment="Center"/>
-                                    <TextBlock Text="深色" Margin="8,0,0,0" VerticalAlignment="Center"/>
-                                </StackPanel>
-                            </RadioButton>
-
-                            <RadioButton x:Name="ThemeAutoRadioButton" GroupName="ThemeMode" Tag="Auto"
-                                         AutomationProperties.AutomationId="ThemeAutoRadioButton"
-                                         Checked="ThemeRadioButton_Checked" Margin="0,6">
-                                <StackPanel Orientation="Horizontal">
-                                    <materialDesign:PackIcon Kind="BrightnessAuto" VerticalAlignment="Center"/>
-                                    <TextBlock Text="跟隨系統" Margin="8,0,0,0" VerticalAlignment="Center"/>
-                                </StackPanel>
-                            </RadioButton>
+                            <StackPanel Orientation="Horizontal" Margin="0,0,0,12">
+                                <Border Style="{StaticResource Brand.IconTile}">
+                                    <materialDesign:PackIcon Kind="Palette" Width="20" Height="20" HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                                </Border>
+                                <TextBlock Text="外觀" Style="{StaticResource Brand.Text.Section}" Margin="12,0,0,0" VerticalAlignment="Center"/>
+                            </StackPanel>
+                            <UniformGrid Columns="3">
+                                <RadioButton x:Name="ThemeLightRadioButton" GroupName="ThemeMode" Tag="Light"
+                                             AutomationProperties.AutomationId="ThemeLightRadioButton"
+                                             Style="{StaticResource Brand.Segment}" Padding="8,10" Margin="0,0,4,0"
+                                             BorderThickness="0" Checked="ThemeRadioButton_Checked">
+                                    <StackPanel>
+                                        <materialDesign:PackIcon Kind="WeatherSunny" Width="20" Height="20" HorizontalAlignment="Center"/>
+                                        <TextBlock Text="淺色" Margin="0,4,0,0" HorizontalAlignment="Center"/>
+                                    </StackPanel>
+                                </RadioButton>
+                                <RadioButton x:Name="ThemeDarkRadioButton" GroupName="ThemeMode" Tag="Dark"
+                                             AutomationProperties.AutomationId="ThemeDarkRadioButton"
+                                             Style="{StaticResource Brand.Segment}" Padding="8,10" Margin="2,0"
+                                             Checked="ThemeRadioButton_Checked">
+                                    <StackPanel>
+                                        <materialDesign:PackIcon Kind="WeatherNight" Width="20" Height="20" HorizontalAlignment="Center"/>
+                                        <TextBlock Text="深色" Margin="0,4,0,0" HorizontalAlignment="Center"/>
+                                    </StackPanel>
+                                </RadioButton>
+                                <RadioButton x:Name="ThemeAutoRadioButton" GroupName="ThemeMode" Tag="Auto"
+                                             AutomationProperties.AutomationId="ThemeAutoRadioButton"
+                                             Style="{StaticResource Brand.Segment}" Padding="8,10" Margin="4,0,0,0"
+                                             Checked="ThemeRadioButton_Checked">
+                                    <StackPanel>
+                                        <materialDesign:PackIcon Kind="BrightnessAuto" Width="20" Height="20" HorizontalAlignment="Center"/>
+                                        <TextBlock Text="跟隨系統" Margin="0,4,0,0" HorizontalAlignment="Center"/>
+                                    </StackPanel>
+                                </RadioButton>
+                            </UniformGrid>
                         </StackPanel>
-                    </materialDesign:Card>
+                    </Border>
 
-                    <materialDesign:Card x:Name="DownloadFolderCard" Padding="16" Margin="0,0,0,16">
+                    <!-- 檔案接收 -->
+                    <Border x:Name="DownloadFolderCard" Style="{StaticResource Brand.Card}" Margin="0,0,0,16">
                         <StackPanel>
-                            <TextBlock Text="檔案接收" FontWeight="Medium" FontSize="15"/>
-                            <TextBlock Text="收到的檔案會儲存到這個資料夾。" Opacity="0.6" FontSize="12"
-                                       Margin="0,4,0,16" TextWrapping="Wrap"/>
-
+                            <Grid Margin="0,0,0,4">
+                                <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
+                                <StackPanel Orientation="Horizontal">
+                                    <Border Style="{StaticResource Brand.IconTile}">
+                                        <materialDesign:PackIcon Kind="FolderDownload" Width="20" Height="20" HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                                    </Border>
+                                    <TextBlock Text="檔案接收" Style="{StaticResource Brand.Text.Section}" Margin="12,0,0,0" VerticalAlignment="Center"/>
+                                </StackPanel>
+                                <StackPanel x:Name="DownloadFolderSavedBadge" Grid.Column="1" Style="{StaticResource Brand.SavedBadge}">
+                                    <materialDesign:PackIcon Kind="CheckCircle" Width="14" Height="14" VerticalAlignment="Center"/>
+                                    <TextBlock Text="已儲存" Margin="4,0,0,0"/>
+                                </StackPanel>
+                            </Grid>
+                            <TextBlock Text="收到的檔案會儲存到這個資料夾。" Style="{StaticResource Brand.Text.Caption}" Margin="0,8,0,12"/>
                             <Grid>
                                 <Grid.ColumnDefinitions>
                                     <ColumnDefinition Width="*"/>
                                     <ColumnDefinition Width="Auto"/>
                                 </Grid.ColumnDefinitions>
-                                <TextBox x:Name="DownloadFolderTextBox" AutomationProperties.AutomationId="DownloadFolderTextBox"
-                                         Grid.Column="0" IsReadOnly="True" Focusable="False"
-                                         Style="{StaticResource MaterialDesignOutlinedTextBox}"
-                                         VerticalAlignment="Center" Margin="0,0,12,0"/>
+                                <Border Background="{DynamicResource Brand.Brush.SurfaceVariant}" CornerRadius="12" Padding="10,8" Margin="0,0,8,0">
+                                    <TextBox x:Name="DownloadFolderTextBox" AutomationProperties.AutomationId="DownloadFolderTextBox"
+                                             IsReadOnly="True" Focusable="False" BorderThickness="0" Background="Transparent"
+                                             materialDesign:TextFieldAssist.DecorationVisibility="Hidden"
+                                             TextWrapping="NoWrap" VerticalAlignment="Center"/>
+                                </Border>
                                 <Button x:Name="BrowseDownloadFolderButton" AutomationProperties.AutomationId="BrowseDownloadFolderButton"
-                                        Grid.Column="1" Style="{StaticResource MaterialDesignOutlinedButton}"
-                                        Content="瀏覽" Click="BrowseDownloadFolderButton_Click"/>
+                                        Grid.Column="1" Style="{StaticResource Brand.Button.Ghost}"
+                                        Content="變更" Click="BrowseDownloadFolderButton_Click"/>
                             </Grid>
+                            <Button Style="{StaticResource Brand.Button.Text}" HorizontalAlignment="Left" Margin="-10,8,0,0"
+                                    Click="OpenDownloadFolderButton_Click">
+                                <StackPanel Orientation="Horizontal">
+                                    <materialDesign:PackIcon Kind="FolderOpen" Width="16" Height="16" Margin="0,0,6,0" VerticalAlignment="Center"/>
+                                    <TextBlock Text="開啟資料夾" VerticalAlignment="Center"/>
+                                </StackPanel>
+                            </Button>
                         </StackPanel>
-                    </materialDesign:Card>
+                    </Border>
 
-                    <materialDesign:Card x:Name="NotificationCard" Padding="16" Margin="0,0,0,16">
-                        <StackPanel>
-                            <TextBlock Text="通知" FontWeight="Medium" FontSize="15"/>
-                            <TextBlock Text="建立連線、收到檔案/資料夾、對方斷線時是否跳出系統匣氣泡通知(連線請求一律會跳出確認對話框,不受此設定影響)。"
-                                       Opacity="0.6" FontSize="12" Margin="0,4,0,12" TextWrapping="Wrap"/>
-                            <CheckBox x:Name="NotificationsEnabledCheckBox" AutomationProperties.AutomationId="NotificationsEnabledCheckBox"
-                                      Content="啟用通知" Checked="NotificationsEnabledCheckBox_Changed" Unchecked="NotificationsEnabledCheckBox_Changed"/>
-                        </StackPanel>
-                    </materialDesign:Card>
+                    <!-- 通知 -->
+                    <Border x:Name="NotificationCard" Style="{StaticResource Brand.Card}" Margin="0,0,0,16">
+                        <Grid>
+                            <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
+                            <StackPanel>
+                                <StackPanel Orientation="Horizontal">
+                                    <Border Style="{StaticResource Brand.IconTile}">
+                                        <materialDesign:PackIcon Kind="BellOutline" Width="20" Height="20" HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                                    </Border>
+                                    <TextBlock Text="通知" Style="{StaticResource Brand.Text.Section}" Margin="12,0,0,0" VerticalAlignment="Center"/>
+                                </StackPanel>
+                                <TextBlock Style="{StaticResource Brand.Text.Caption}" Margin="0,10,0,0"
+                                           Text="建立連線、收到檔案、對方斷線時跳出系統匣通知。連線請求一律會跳出確認視窗,不受這個設定影響。"/>
+                            </StackPanel>
+                            <ToggleButton x:Name="NotificationsEnabledCheckBox" AutomationProperties.AutomationId="NotificationsEnabledCheckBox"
+                                          Grid.Column="1" Margin="12,0,0,0" VerticalAlignment="Top"
+                                          Style="{StaticResource MaterialDesignSwitchToggleButton}"
+                                          Checked="NotificationsEnabledCheckBox_Changed" Unchecked="NotificationsEnabledCheckBox_Changed"/>
+                        </Grid>
+                    </Border>
 
-                    <materialDesign:Card x:Name="TrustedDevicesCard" Padding="16" Margin="0,0,0,16">
+                    <!-- 開機 -->
+                    <Border x:Name="AutoStartCard" Style="{StaticResource Brand.Card}" Margin="0,0,0,16">
+                        <Grid>
+                            <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
+                            <StackPanel>
+                                <StackPanel Orientation="Horizontal">
+                                    <Border Style="{StaticResource Brand.IconTile}">
+                                        <materialDesign:PackIcon Kind="Power" Width="20" Height="20" HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                                    </Border>
+                                    <TextBlock Text="開機時自動啟動" Style="{StaticResource Brand.Text.Section}" Margin="12,0,0,0" VerticalAlignment="Center"/>
+                                </StackPanel>
+                                <TextBlock Style="{StaticResource Brand.Text.Caption}" Margin="0,10,0,0"
+                                           Text="開機後自動在背景執行並隱藏到系統匣,隨時可以被其他裝置找到。"/>
+                            </StackPanel>
+                            <ToggleButton x:Name="AutoStartCheckBox" AutomationProperties.AutomationId="AutoStartCheckBox"
+                                          Grid.Column="1" Margin="12,0,0,0" VerticalAlignment="Top"
+                                          Style="{StaticResource MaterialDesignSwitchToggleButton}"
+                                          Checked="AutoStartCheckBox_Changed" Unchecked="AutoStartCheckBox_Changed"/>
+                        </Grid>
+                    </Border>
+
+                    <!-- 信任的裝置 -->
+                    <Border x:Name="TrustedDevicesCard" Style="{StaticResource Brand.Card}" Margin="0,0,0,16">
                         <StackPanel>
-                            <TextBlock Text="信任的裝置" FontWeight="Medium" FontSize="15"/>
-                            <TextBlock Text="信任的裝置送出連線請求時會直接自動接受,不再跳出確認對話框。"
-                                       Opacity="0.6" FontSize="12" Margin="0,4,0,12" TextWrapping="Wrap"/>
-                            <TextBlock x:Name="TrustedDevicesEmptyText" Opacity="0.5" FontSize="12" TextWrapping="Wrap"
-                                       Text="目前沒有信任的裝置(可在收到連線請求時勾選「信任此裝置」加入)。"/>
+                            <StackPanel Orientation="Horizontal">
+                                <Border Style="{StaticResource Brand.IconTile}">
+                                    <materialDesign:PackIcon Kind="ShieldCheckOutline" Width="20" Height="20" HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                                </Border>
+                                <TextBlock Text="信任的裝置" Style="{StaticResource Brand.Text.Section}" Margin="12,0,0,0" VerticalAlignment="Center"/>
+                            </StackPanel>
+                            <TextBlock Style="{StaticResource Brand.Text.Caption}" Margin="0,10,0,10"
+                                       Text="信任的裝置送出連線請求時會自動接受,不再跳出確認視窗。"/>
+                            <TextBlock x:Name="TrustedDevicesEmptyText" Style="{StaticResource Brand.Text.Caption}" FontStyle="Italic"
+                                       Text="目前沒有信任的裝置。收到連線請求時勾選「信任此裝置」即可加入。"/>
                             <ItemsControl x:Name="TrustedDevicesItemsControl">
                                 <ItemsControl.ItemTemplate>
                                     <DataTemplate>
-                                        <Grid Margin="0,4">
-                                            <Grid.ColumnDefinitions>
-                                                <ColumnDefinition Width="*"/>
-                                                <ColumnDefinition Width="Auto"/>
-                                            </Grid.ColumnDefinitions>
-                                            <TextBlock Grid.Column="0" Text="{Binding}" VerticalAlignment="Center"/>
-                                            <Button Grid.Column="1" Tag="{Binding}" Click="UntrustDeviceButton_Click"
-                                                    Style="{StaticResource MaterialDesignIconButton}" Width="32" Height="32">
-                                                <materialDesign:PackIcon Kind="Close" Width="16" Height="16"/>
-                                            </Button>
-                                        </Grid>
+                                        <Border Background="{DynamicResource Brand.Brush.SurfaceVariant}" CornerRadius="12" Padding="12,4,4,4" Margin="0,0,0,6">
+                                            <Grid>
+                                                <Grid.ColumnDefinitions>
+                                                    <ColumnDefinition Width="Auto"/>
+                                                    <ColumnDefinition Width="*"/>
+                                                    <ColumnDefinition Width="Auto"/>
+                                                </Grid.ColumnDefinitions>
+                                                <materialDesign:PackIcon Kind="Devices" Width="16" Height="16" VerticalAlignment="Center"
+                                                                          Foreground="{DynamicResource Brand.Brush.Primary}"/>
+                                                <TextBlock Grid.Column="1" Text="{Binding}" Margin="10,0" VerticalAlignment="Center" TextTrimming="CharacterEllipsis"/>
+                                                <Button Grid.Column="2" Tag="{Binding}" Click="UntrustDeviceButton_Click" ToolTip="取消信任"
+                                                        Style="{StaticResource Brand.Button.Icon}" Width="30" Height="30">
+                                                    <materialDesign:PackIcon Kind="Close" Width="15" Height="15"/>
+                                                </Button>
+                                            </Grid>
+                                        </Border>
                                     </DataTemplate>
                                 </ItemsControl.ItemTemplate>
                             </ItemsControl>
                         </StackPanel>
-                    </materialDesign:Card>
+                    </Border>
 
-                    <materialDesign:Card x:Name="SearchDurationCard" Padding="16" Margin="0,0,0,16">
+                    <!-- 影片伺服器預設值 -->
+                    <Border x:Name="VideoServerSettingsCard" Style="{StaticResource Brand.Card}" Margin="0,0,0,16">
                         <StackPanel>
-                            <TextBlock Text="搜尋設定" FontWeight="Medium" FontSize="15"/>
-                            <TextBlock Text="開啟 App 時自動搜尋裝置的秒數(預設 30 秒)。" Opacity="0.6" FontSize="12"
-                                       Margin="0,4,0,16" TextWrapping="Wrap"/>
+                            <Grid>
+                                <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
+                                <StackPanel Orientation="Horizontal">
+                                    <Border Style="{StaticResource Brand.IconTile}">
+                                        <materialDesign:PackIcon Kind="MovieCog" Width="20" Height="20" HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                                    </Border>
+                                    <TextBlock Text="影片分享預設值" Style="{StaticResource Brand.Text.Section}" Margin="12,0,0,0" VerticalAlignment="Center"/>
+                                </StackPanel>
+                                <StackPanel x:Name="VideoSettingsSavedBadge" Grid.Column="1" Style="{StaticResource Brand.SavedBadge}">
+                                    <materialDesign:PackIcon Kind="CheckCircle" Width="14" Height="14" VerticalAlignment="Center"/>
+                                    <TextBlock Text="已儲存" Margin="4,0,0,0"/>
+                                </StackPanel>
+                            </Grid>
+                            <TextBlock Style="{StaticResource Brand.Text.Caption}" Margin="0,10,0,14"
+                                       Text="下次開始分享影片時,觀看頁一開始的排序與播放行為。"/>
 
-                            <TextBox x:Name="SearchDurationTextBox" AutomationProperties.AutomationId="SearchDurationTextBox"
-                                     materialDesign:HintAssist.Hint="搜尋秒數"
-                                     Style="{StaticResource MaterialDesignOutlinedTextBox}"
-                                     Width="120" HorizontalAlignment="Left"
-                                     PreviewTextInput="SearchDurationTextBox_PreviewTextInput"
-                                     KeyDown="SearchDurationTextBox_KeyDown"
-                                     LostFocus="SearchDurationTextBox_LostFocus"/>
-                        </StackPanel>
-                    </materialDesign:Card>
-
-                    <materialDesign:Card x:Name="ConnectionCard" Padding="16" Margin="0,0,0,16">
-                        <StackPanel>
-                            <TextBlock Text="連線設定" FontWeight="Medium" FontSize="15"/>
-                            <TextBlock Text="監聽連接埠(留空 = 系統自動指派,變更需要重新啟動 App)與主動連線的逾時秒數。"
-                                       Opacity="0.6" FontSize="12" Margin="0,4,0,16" TextWrapping="Wrap"/>
-
-                            <TextBox x:Name="PreferredPortTextBox" AutomationProperties.AutomationId="PreferredPortTextBox"
-                                     materialDesign:HintAssist.Hint="監聽連接埠"
-                                     Style="{StaticResource MaterialDesignOutlinedTextBox}"
-                                     Width="160" HorizontalAlignment="Left" Margin="0,0,0,12"
-                                     PreviewTextInput="PreferredPortTextBox_PreviewTextInput"
-                                     KeyDown="PreferredPortTextBox_KeyDown"
-                                     LostFocus="PreferredPortTextBox_LostFocus"/>
-
-                            <TextBox x:Name="ConnectTimeoutTextBox" AutomationProperties.AutomationId="ConnectTimeoutTextBox"
-                                     materialDesign:HintAssist.Hint="連線逾時秒數"
-                                     Style="{StaticResource MaterialDesignOutlinedTextBox}"
-                                     Width="160" HorizontalAlignment="Left"
-                                     PreviewTextInput="ConnectTimeoutTextBox_PreviewTextInput"
-                                     KeyDown="ConnectTimeoutTextBox_KeyDown"
-                                     LostFocus="ConnectTimeoutTextBox_LostFocus"/>
-                        </StackPanel>
-                    </materialDesign:Card>
-
-                    <materialDesign:Card x:Name="AutoStartCard" Padding="16" Margin="0,0,0,16">
-                        <StackPanel>
-                            <TextBlock Text="開機" FontWeight="Medium" FontSize="15"/>
-                            <TextBlock Text="開機時自動啟動並直接隱藏到系統匣。" Opacity="0.6" FontSize="12"
-                                       Margin="0,4,0,12" TextWrapping="Wrap"/>
-                            <CheckBox x:Name="AutoStartCheckBox" AutomationProperties.AutomationId="AutoStartCheckBox"
-                                      Content="開機時自動啟動" Checked="AutoStartCheckBox_Changed" Unchecked="AutoStartCheckBox_Changed"/>
-                        </StackPanel>
-                    </materialDesign:Card>
-
-                    <materialDesign:Card x:Name="VideoServerSettingsCard" Padding="16" Margin="0,0,0,16">
-                        <StackPanel>
-                            <TextBlock Text="影片伺服器" FontWeight="Medium" FontSize="15"/>
-                            <TextBlock Text="下次開始分享影片時套用的預設值:清單排序方式、播放器初始行為,以及掃描資料夾時額外要當作影片的副檔名。"
-                                       Opacity="0.6" FontSize="12" Margin="0,4,0,16" TextWrapping="Wrap"/>
-
-                            <TextBlock Text="預設排序方式" FontSize="12" Opacity="0.7" Margin="0,0,0,4"/>
+                            <TextBlock Text="排序方式" Style="{StaticResource Brand.Text.Overline}" Margin="0,0,0,4"/>
                             <ComboBox x:Name="VideoDefaultSortComboBox" AutomationProperties.AutomationId="VideoDefaultSortComboBox"
-                                      Width="220" HorizontalAlignment="Left" Margin="0,0,0,16"
+                                      HorizontalAlignment="Stretch" Margin="0,0,0,14"
                                       SelectionChanged="VideoDefaultSortComboBox_SelectionChanged">
                                 <ComboBoxItem Tag="name_asc" Content="檔名(A→Z)"/>
                                 <ComboBoxItem Tag="name_desc" Content="檔名(Z→A)"/>
@@ -637,39 +1242,49 @@
                                 <ComboBoxItem Tag="date_asc" Content="修改時間(舊→新)"/>
                             </ComboBox>
 
-                            <CheckBox x:Name="VideoAutoplayNextCheckBox" AutomationProperties.AutomationId="VideoAutoplayNextCheckBox"
-                                      Content="預設自動播放下一部" Margin="0,0,0,16"
-                                      Checked="VideoAutoplayNextCheckBox_Changed" Unchecked="VideoAutoplayNextCheckBox_Changed"/>
+                            <Grid Margin="0,0,0,10">
+                                <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
+                                <TextBlock Text="自動播放下一部" VerticalAlignment="Center"/>
+                                <ToggleButton x:Name="VideoAutoplayNextCheckBox" AutomationProperties.AutomationId="VideoAutoplayNextCheckBox"
+                                              Grid.Column="1" Style="{StaticResource MaterialDesignSwitchToggleButton}"
+                                              Checked="VideoAutoplayNextCheckBox_Changed" Unchecked="VideoAutoplayNextCheckBox_Changed"/>
+                            </Grid>
+                            <Grid Margin="0,0,0,14">
+                                <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
+                                <TextBlock Text="隨機播放" VerticalAlignment="Center"/>
+                                <ToggleButton x:Name="VideoShuffleCheckBox" AutomationProperties.AutomationId="VideoShuffleCheckBox"
+                                              Grid.Column="1" Style="{StaticResource MaterialDesignSwitchToggleButton}"
+                                              Checked="VideoShuffleCheckBox_Changed" Unchecked="VideoShuffleCheckBox_Changed"/>
+                            </Grid>
 
-                            <CheckBox x:Name="VideoShuffleCheckBox" AutomationProperties.AutomationId="VideoShuffleCheckBox"
-                                      Content="預設隨機播放" Margin="0,0,0,16"
-                                      Checked="VideoShuffleCheckBox_Changed" Unchecked="VideoShuffleCheckBox_Changed"/>
-
-                            <TextBlock Text="自動播放倒數秒數" FontSize="12" Opacity="0.7" Margin="0,0,0,4"/>
+                            <TextBlock Text="自動播放前的倒數秒數" Style="{StaticResource Brand.Text.Overline}" Margin="0,0,0,4"/>
                             <TextBox x:Name="VideoAutoplayCountdownTextBox" AutomationProperties.AutomationId="VideoAutoplayCountdownTextBox"
-                                     materialDesign:HintAssist.Hint="倒數秒數"
-                                     Style="{StaticResource MaterialDesignOutlinedTextBox}"
-                                     Width="120" HorizontalAlignment="Left" Margin="0,0,0,16"
+                                     materialDesign:HintAssist.Hint="1–30 秒"
+                                     Style="{StaticResource MaterialDesignOutlinedTextBox}" Padding="10,8"
+                                     Width="140" HorizontalAlignment="Left"
                                      PreviewTextInput="VideoAutoplayCountdownTextBox_PreviewTextInput"
+                                     TextChanged="VideoAutoplayCountdownTextBox_TextChanged"
                                      KeyDown="VideoAutoplayCountdownTextBox_KeyDown"
                                      LostFocus="VideoAutoplayCountdownTextBox_LostFocus"/>
+                            <TextBlock x:Name="VideoAutoplayCountdownErrorText" Foreground="{StaticResource Brand.Brush.Error}" FontSize="12"
+                                       Margin="2,4,0,0" TextWrapping="Wrap" Visibility="Collapsed"/>
 
-                            <TextBlock Text="預設音量" FontSize="12" Opacity="0.7" Margin="0,0,0,4"/>
-                            <Grid Margin="0,0,0,16">
+                            <TextBlock Text="預設音量" Style="{StaticResource Brand.Text.Overline}" Margin="0,14,0,4"/>
+                            <Grid>
                                 <Grid.ColumnDefinitions>
-                                    <ColumnDefinition Width="220"/>
+                                    <ColumnDefinition Width="*"/>
                                     <ColumnDefinition Width="Auto"/>
                                 </Grid.ColumnDefinitions>
                                 <Slider x:Name="VideoDefaultVolumeSlider" AutomationProperties.AutomationId="VideoDefaultVolumeSlider"
                                         Grid.Column="0" Minimum="0" Maximum="100" TickFrequency="1" IsSnapToTickEnabled="True"
                                         VerticalAlignment="Center" Margin="0,0,12,0"
                                         ValueChanged="VideoDefaultVolumeSlider_ValueChanged"/>
-                                <TextBlock x:Name="VideoDefaultVolumeText" Grid.Column="1" VerticalAlignment="Center" Width="40"/>
+                                <TextBlock x:Name="VideoDefaultVolumeText" Grid.Column="1" VerticalAlignment="Center" Width="40" FontWeight="SemiBold"/>
                             </Grid>
 
-                            <TextBlock Text="預設播放速度" FontSize="12" Opacity="0.7" Margin="0,0,0,4"/>
+                            <TextBlock Text="預設播放速度" Style="{StaticResource Brand.Text.Overline}" Margin="0,14,0,4"/>
                             <ComboBox x:Name="VideoDefaultSpeedComboBox" AutomationProperties.AutomationId="VideoDefaultSpeedComboBox"
-                                      Width="160" HorizontalAlignment="Left" Margin="0,0,0,16"
+                                      Width="140" HorizontalAlignment="Left"
                                       SelectionChanged="VideoDefaultSpeedComboBox_SelectionChanged">
                                 <ComboBoxItem Tag="0.5" Content="0.5x"/>
                                 <ComboBoxItem Tag="1" Content="1x"/>
@@ -677,15 +1292,121 @@
                                 <ComboBoxItem Tag="1.5" Content="1.5x"/>
                                 <ComboBoxItem Tag="2" Content="2x"/>
                             </ComboBox>
-
-                            <TextBlock Text="額外支援的副檔名" FontSize="12" Opacity="0.7" Margin="0,0,0,4"/>
-                            <TextBox x:Name="VideoExtraExtensionsTextBox" AutomationProperties.AutomationId="VideoExtraExtensionsTextBox"
-                                     materialDesign:HintAssist.Hint="以逗號分隔,例如 .ogv, .3gp"
-                                     Style="{StaticResource MaterialDesignOutlinedTextBox}"
-                                     HorizontalAlignment="Stretch"
-                                     LostFocus="VideoExtraExtensionsTextBox_LostFocus"/>
                         </StackPanel>
-                    </materialDesign:Card>
+                    </Border>
+
+                    <!-- 進階 -->
+                    <Border x:Name="AdvancedCard" Style="{StaticResource Brand.Card}" Margin="0,0,0,16">
+                        <StackPanel>
+                            <Grid>
+                                <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
+                                <StackPanel Orientation="Horizontal">
+                                    <Border Style="{StaticResource Brand.IconTile}">
+                                        <materialDesign:PackIcon Kind="Tune" Width="20" Height="20" HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                                    </Border>
+                                    <TextBlock Text="進階" Style="{StaticResource Brand.Text.Section}" Margin="12,0,0,0" VerticalAlignment="Center"/>
+                                </StackPanel>
+                                <StackPanel x:Name="AdvancedSavedBadge" Grid.Column="1" Style="{StaticResource Brand.SavedBadge}">
+                                    <materialDesign:PackIcon Kind="CheckCircle" Width="14" Height="14" VerticalAlignment="Center"/>
+                                    <TextBlock Text="已儲存" Margin="4,0,0,0"/>
+                                </StackPanel>
+                            </Grid>
+                            <TextBlock Style="{StaticResource Brand.Text.Caption}" Margin="0,10,0,0"
+                                       Text="一般情況不需要調整。遇到防火牆只開放特定連接埠、或網路比較慢時再來這裡設定。"/>
+                            <Expander x:Name="AdvancedExpander" Header="顯示進階設定" Margin="-8,6,-8,0" Background="Transparent"
+                                      Expanded="AdvancedExpander_Toggled" Collapsed="AdvancedExpander_Toggled">
+                                <StackPanel Margin="8,4,8,0">
+                                    <TextBlock Text="啟動後快速搜尋的秒數" Style="{StaticResource Brand.Text.Overline}" Margin="0,0,0,4"/>
+                                    <TextBox x:Name="SearchDurationTextBox" AutomationProperties.AutomationId="SearchDurationTextBox"
+                                             materialDesign:HintAssist.Hint="5–300 秒"
+                                             Style="{StaticResource MaterialDesignOutlinedTextBox}" Padding="10,8"
+                                             Width="140" HorizontalAlignment="Left"
+                                             PreviewTextInput="SearchDurationTextBox_PreviewTextInput"
+                                             TextChanged="SearchDurationTextBox_TextChanged"
+                                             KeyDown="SearchDurationTextBox_KeyDown"
+                                             LostFocus="SearchDurationTextBox_LostFocus"/>
+                                    <TextBlock x:Name="SearchDurationErrorText" Foreground="{StaticResource Brand.Brush.Error}" FontSize="12"
+                                               Margin="2,4,0,0" TextWrapping="Wrap" Visibility="Collapsed"/>
+                                    <TextBlock Style="{StaticResource Brand.Text.Caption}" FontSize="11" Margin="2,4,0,14"
+                                               Text="這段時間內每秒搜尋一次,之後改成每 10 秒在背景持續搜尋。"/>
+
+                                    <TextBlock Text="監聽連接埠" Style="{StaticResource Brand.Text.Overline}" Margin="0,0,0,4"/>
+                                    <TextBox x:Name="PreferredPortTextBox" AutomationProperties.AutomationId="PreferredPortTextBox"
+                                             materialDesign:HintAssist.Hint="自動指派"
+                                             Style="{StaticResource MaterialDesignOutlinedTextBox}" Padding="10,8"
+                                             Width="140" HorizontalAlignment="Left"
+                                             PreviewTextInput="PreferredPortTextBox_PreviewTextInput"
+                                             TextChanged="PreferredPortTextBox_TextChanged"
+                                             KeyDown="PreferredPortTextBox_KeyDown"
+                                             LostFocus="PreferredPortTextBox_LostFocus"/>
+                                    <TextBlock x:Name="PreferredPortErrorText" Foreground="{StaticResource Brand.Brush.Error}" FontSize="12"
+                                               Margin="2,4,0,0" TextWrapping="Wrap" Visibility="Collapsed"/>
+                                    <TextBlock Style="{StaticResource Brand.Text.Caption}" FontSize="11" Margin="2,4,0,14"
+                                               Text="留空由系統自動指派。變更後要重新啟動 App 才會生效。"/>
+
+                                    <TextBlock Text="連線逾時秒數" Style="{StaticResource Brand.Text.Overline}" Margin="0,0,0,4"/>
+                                    <TextBox x:Name="ConnectTimeoutTextBox" AutomationProperties.AutomationId="ConnectTimeoutTextBox"
+                                             materialDesign:HintAssist.Hint="3–120 秒"
+                                             Style="{StaticResource MaterialDesignOutlinedTextBox}" Padding="10,8"
+                                             Width="140" HorizontalAlignment="Left"
+                                             PreviewTextInput="ConnectTimeoutTextBox_PreviewTextInput"
+                                             TextChanged="ConnectTimeoutTextBox_TextChanged"
+                                             KeyDown="ConnectTimeoutTextBox_KeyDown"
+                                             LostFocus="ConnectTimeoutTextBox_LostFocus"/>
+                                    <TextBlock x:Name="ConnectTimeoutErrorText" Foreground="{StaticResource Brand.Brush.Error}" FontSize="12"
+                                               Margin="2,4,0,0" TextWrapping="Wrap" Visibility="Collapsed"/>
+                                    <TextBlock Style="{StaticResource Brand.Text.Caption}" FontSize="11" Margin="2,4,0,14"
+                                               Text="主動連線時,等待對方網路回應的最長時間。"/>
+
+                                    <TextBlock Text="額外當作影片的副檔名" Style="{StaticResource Brand.Text.Overline}" Margin="0,0,0,4"/>
+                                    <TextBox x:Name="VideoExtraExtensionsTextBox" AutomationProperties.AutomationId="VideoExtraExtensionsTextBox"
+                                             materialDesign:HintAssist.Hint="例如 .ogv, .3gp"
+                                             Style="{StaticResource MaterialDesignOutlinedTextBox}" Padding="10,8"
+                                             HorizontalAlignment="Stretch"
+                                             TextChanged="VideoExtraExtensionsTextBox_TextChanged"
+                                             LostFocus="VideoExtraExtensionsTextBox_LostFocus"/>
+                                    <TextBlock Style="{StaticResource Brand.Text.Caption}" FontSize="11" Margin="2,4,0,4"
+                                               Text="以逗號分隔;分享影片資料夾時,這些副檔名的檔案也會列入。"/>
+                                </StackPanel>
+                            </Expander>
+                        </StackPanel>
+                    </Border>
+
+                    <!-- 說明與診斷 -->
+                    <Border x:Name="DiagnosticsCard" Style="{StaticResource Brand.Card}" Margin="0,0,0,16">
+                        <StackPanel>
+                            <StackPanel Orientation="Horizontal">
+                                <Border Style="{StaticResource Brand.IconTile}">
+                                    <materialDesign:PackIcon Kind="HelpCircleOutline" Width="20" Height="20" HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                                </Border>
+                                <TextBlock Text="說明與診斷" Style="{StaticResource Brand.Text.Section}" Margin="12,0,0,0" VerticalAlignment="Center"/>
+                            </StackPanel>
+                            <TextBlock Style="{StaticResource Brand.Text.Caption}" Margin="0,10,0,10"
+                                       Text="連不上其他裝置時,狀態紀錄可以幫忙找出原因。"/>
+                            <Border Background="{DynamicResource Brand.Brush.SurfaceVariant}" CornerRadius="12" Padding="10,8">
+                                <TextBox x:Name="LogTextBox" AutomationProperties.AutomationId="LogTextBox"
+                                         IsReadOnly="True" TextWrapping="Wrap" Height="140"
+                                         VerticalScrollBarVisibility="Auto" FontFamily="Consolas" FontSize="11"
+                                         materialDesign:TextFieldAssist.DecorationVisibility="Hidden"
+                                         BorderThickness="0" Background="Transparent"/>
+                            </Border>
+                            <WrapPanel Margin="-10,8,0,0">
+                                <Button Style="{StaticResource Brand.Button.Text}" Click="CopyLogButton_Click">
+                                    <StackPanel Orientation="Horizontal">
+                                        <materialDesign:PackIcon Kind="ContentCopy" Width="16" Height="16" Margin="0,0,6,0" VerticalAlignment="Center"/>
+                                        <TextBlock Text="複製紀錄" VerticalAlignment="Center"/>
+                                    </StackPanel>
+                                </Button>
+                                <Button x:Name="ShowOnboardingButton" AutomationProperties.AutomationId="ShowOnboardingButton"
+                                        Style="{StaticResource Brand.Button.Text}" Click="ShowOnboardingButton_Click">
+                                    <StackPanel Orientation="Horizontal">
+                                        <materialDesign:PackIcon Kind="HandWave" Width="16" Height="16" Margin="0,0,6,0" VerticalAlignment="Center"/>
+                                        <TextBlock Text="重新顯示使用引導" VerticalAlignment="Center"/>
+                                    </StackPanel>
+                                </Button>
+                            </WrapPanel>
+                        </StackPanel>
+                    </Border>
                     </Grid>
                 </StackPanel>
                 </ScrollViewer>
@@ -698,24 +1419,124 @@
                     <RowDefinition Height="*"/>
                 </Grid.RowDefinitions>
 
-                <materialDesign:ColorZone x:Name="VideoWebViewHeader" Grid.Row="0" Mode="PrimaryMid">
-                    <StackPanel Orientation="Horizontal" Margin="4">
+                <Border x:Name="VideoWebViewHeader" Grid.Row="0" Margin="4,12,12,10" Padding="6"
+                        Style="{StaticResource Brand.Card}" CornerRadius="18">
+                    <Grid>
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="Auto"/>
+                            <ColumnDefinition Width="Auto"/>
+                            <ColumnDefinition Width="*"/>
+                        </Grid.ColumnDefinitions>
                         <Button AutomationProperties.AutomationId="VideoWebViewBackButton"
-                                Style="{StaticResource MaterialDesignIconButton}"
-                                ToolTip="返回" Click="VideoWebViewBackButton_Click">
-                            <materialDesign:PackIcon Kind="ArrowLeft" Width="22" Height="22" Foreground="White"/>
+                                Style="{StaticResource Brand.Button.Icon}"
+                                ToolTip="返回影片清單" Click="VideoWebViewBackButton_Click">
+                            <materialDesign:PackIcon Kind="ArrowLeft" Width="22" Height="22"/>
                         </Button>
-                        <TextBlock x:Name="VideoWebViewTitleText" VerticalAlignment="Center" Margin="8,0,0,0" FontWeight="Medium"/>
-                    </StackPanel>
-                </materialDesign:ColorZone>
+                        <Border Grid.Column="1" Style="{StaticResource Brand.Avatar}" Width="32" Height="32" CornerRadius="10" Margin="8,0,0,0">
+                            <materialDesign:PackIcon Kind="MovieOpenPlay" Width="18" Height="18" HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                        </Border>
+                        <TextBlock x:Name="VideoWebViewTitleText" Grid.Column="2" VerticalAlignment="Center" Margin="12,0,0,0"
+                                   Style="{StaticResource Brand.Text.Section}" TextTrimming="CharacterEllipsis"/>
+                    </Grid>
+                </Border>
 
-                <wv2:WebView2 x:Name="VideoWebView" Grid.Row="1"
-                              CoreWebView2InitializationCompleted="VideoWebView_CoreWebView2InitializationCompleted"/>
+                <Border Grid.Row="1" CornerRadius="0" ClipToBounds="True">
+                    <wv2:WebView2 x:Name="VideoWebView" DefaultBackgroundColor="#0B1020"
+                                  CoreWebView2InitializationCompleted="VideoWebView_CoreWebView2InitializationCompleted"/>
+                </Border>
             </Grid>
 
             <materialDesign:Snackbar x:Name="MainSnackbar"
-                                      HorizontalAlignment="Stretch" VerticalAlignment="Bottom"
+                                      HorizontalAlignment="Center" VerticalAlignment="Bottom" MaxWidth="560"
                                       Margin="16"/>
+            </Grid>
+
+            <!-- ===================== 首次啟動引導 ===================== -->
+            <Grid x:Name="OnboardingOverlay" Grid.ColumnSpan="2" Panel.ZIndex="10" Visibility="Collapsed"
+                  Background="{DynamicResource Brand.Brush.Background}">
+                <Border Style="{StaticResource Brand.Card}" Width="540" Padding="36,32" HorizontalAlignment="Center" VerticalAlignment="Center">
+                    <StackPanel>
+                        <!-- 步驟 1:歡迎 -->
+                        <StackPanel x:Name="OnboardingStep1">
+                            <ContentControl Style="{StaticResource Brand.Radar}" HorizontalAlignment="Center" Width="150" Height="150">
+                                <materialDesign:PackIcon Kind="LanConnect" Width="30" Height="30"/>
+                            </ContentControl>
+                            <TextBlock Text="歡迎使用 ConnectIt" Style="{StaticResource Brand.Text.Display}" HorizontalAlignment="Center" Margin="0,16,0,10"/>
+                            <TextBlock Style="{StaticResource Brand.Text.Caption}" FontSize="14" TextAlignment="Center"
+                                       Text="在同一個區網內,讓電腦和手機自動找到彼此、互相傳送檔案,或把影片分享給其他裝置觀看。不需要帳號,也不經過網路雲端。"/>
+                        </StackPanel>
+
+                        <!-- 步驟 2:取名 -->
+                        <StackPanel x:Name="OnboardingStep2" Visibility="Collapsed">
+                            <Border Width="84" Height="84" CornerRadius="28" Background="{StaticResource Brand.Brush.Gradient}" HorizontalAlignment="Center">
+                                <materialDesign:PackIcon Kind="Laptop" Width="40" Height="40" Foreground="White"
+                                                          HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                            </Border>
+                            <TextBlock Text="替這台電腦取個名字" Style="{StaticResource Brand.Text.Display}" HorizontalAlignment="Center" Margin="0,18,0,8"/>
+                            <TextBlock Style="{StaticResource Brand.Text.Caption}" FontSize="14" TextAlignment="Center" Margin="0,0,0,20"
+                                       Text="其他裝置會用這個名字找到你,之後隨時可以在「裝置」頁修改。"/>
+                            <TextBox x:Name="OnboardingDeviceNameTextBox" AutomationProperties.AutomationId="OnboardingDeviceNameTextBox"
+                                     Style="{StaticResource MaterialDesignOutlinedTextBox}" FontSize="16" MaxLength="40"
+                                     materialDesign:HintAssist.Hint="裝置名稱" KeyDown="OnboardingDeviceNameTextBox_KeyDown"/>
+                        </StackPanel>
+
+                        <!-- 步驟 3:怎麼用 -->
+                        <StackPanel x:Name="OnboardingStep3" Visibility="Collapsed">
+                            <TextBlock Text="三個步驟開始使用" Style="{StaticResource Brand.Text.Display}" HorizontalAlignment="Center" Margin="0,0,0,20"/>
+                            <Grid Margin="0,0,0,16">
+                                <Grid.ColumnDefinitions><ColumnDefinition Width="Auto"/><ColumnDefinition Width="*"/></Grid.ColumnDefinitions>
+                                <Border Style="{StaticResource Brand.IconTile}" Width="44" Height="44" CornerRadius="14">
+                                    <materialDesign:PackIcon Kind="Wifi" Width="22" Height="22" HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                                </Border>
+                                <StackPanel Grid.Column="1" Margin="14,0,0,0" VerticalAlignment="Center">
+                                    <TextBlock Text="連到同一個網路" Style="{StaticResource Brand.Text.Section}"/>
+                                    <TextBlock Text="電腦和手機連同一個 Wi-Fi 或區網,兩邊都打開 ConnectIt。" Style="{StaticResource Brand.Text.Caption}"/>
+                                </StackPanel>
+                            </Grid>
+                            <Grid Margin="0,0,0,16">
+                                <Grid.ColumnDefinitions><ColumnDefinition Width="Auto"/><ColumnDefinition Width="*"/></Grid.ColumnDefinitions>
+                                <Border Style="{StaticResource Brand.IconTile}" Width="44" Height="44" CornerRadius="14">
+                                    <materialDesign:PackIcon Kind="LanConnect" Width="22" Height="22" HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                                </Border>
+                                <StackPanel Grid.Column="1" Margin="14,0,0,0" VerticalAlignment="Center">
+                                    <TextBlock Text="找到對方、按「連線」" Style="{StaticResource Brand.Text.Section}"/>
+                                    <TextBlock Text="對方會自動出現在「裝置」頁,對方按下接受就連上了。" Style="{StaticResource Brand.Text.Caption}"/>
+                                </StackPanel>
+                            </Grid>
+                            <Grid>
+                                <Grid.ColumnDefinitions><ColumnDefinition Width="Auto"/><ColumnDefinition Width="*"/></Grid.ColumnDefinitions>
+                                <Border Style="{StaticResource Brand.IconTile}" Width="44" Height="44" CornerRadius="14">
+                                    <materialDesign:PackIcon Kind="FileSend" Width="22" Height="22" HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                                </Border>
+                                <StackPanel Grid.Column="1" Margin="14,0,0,0" VerticalAlignment="Center">
+                                    <TextBlock Text="拖曳檔案就能傳送" Style="{StaticResource Brand.Text.Section}"/>
+                                    <TextBlock Text="想看影片?到「影片」頁觀看別人分享的影片,或分享自己的。" Style="{StaticResource Brand.Text.Caption}"/>
+                                </StackPanel>
+                            </Grid>
+                        </StackPanel>
+
+                        <!-- 進度點 + 按鈕 -->
+                        <Grid Margin="0,32,0,0">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="*"/>
+                                <ColumnDefinition Width="Auto"/>
+                                <ColumnDefinition Width="*"/>
+                            </Grid.ColumnDefinitions>
+                            <Button x:Name="OnboardingBackButton" Style="{StaticResource Brand.Button.Text}" HorizontalAlignment="Left"
+                                    Content="略過" Click="OnboardingBackButton_Click"/>
+                            <StackPanel Grid.Column="1" Orientation="Horizontal" VerticalAlignment="Center">
+                                <Border x:Name="OnboardingDot1" Width="22" Height="8" CornerRadius="4" Margin="3,0" Background="{StaticResource Brand.Brush.Gradient}"/>
+                                <Border x:Name="OnboardingDot2" Width="8" Height="8" CornerRadius="4" Margin="3,0" Background="{DynamicResource Brand.Brush.Outline}"/>
+                                <Border x:Name="OnboardingDot3" Width="8" Height="8" CornerRadius="4" Margin="3,0" Background="{DynamicResource Brand.Brush.Outline}"/>
+                            </StackPanel>
+                            <Button x:Name="OnboardingNextButton" AutomationProperties.AutomationId="OnboardingNextButton"
+                                    Grid.Column="2" Style="{StaticResource Brand.Button.Gradient}" HorizontalAlignment="Right"
+                                    Click="OnboardingNextButton_Click">
+                                <TextBlock x:Name="OnboardingNextButtonText" Text="下一步"/>
+                            </Button>
+                        </Grid>
+                    </StackPanel>
+                </Border>
             </Grid>
         </Grid>
     </materialDesign:DialogHost>

@@ -11,54 +11,110 @@ namespace ConnectIt.Wpf;
 
 public partial class MainWindow
 {
-    // 開啟 App 時自動搜尋裝置的秒數,可在設定頁調整(預設值見 DiscoverySettingsService)。
-    private TimeSpan AutoSearchDuration => TimeSpan.FromSeconds(_discoverySettings.SearchDurationSeconds);
+    // 開啟 App(或手動重新搜尋)後「快速搜尋」的秒數,可在設定頁調整(預設值見 DiscoverySettingsService)。
+    // 快速搜尋結束後不會停止,而是改成低頻率在背景持續搜尋,使用者不需要再手動按重新整理。
+    private TimeSpan FastSearchDuration => TimeSpan.FromSeconds(_discoverySettings.SearchDurationSeconds);
 
-    // 搜尋期間內每隔幾秒就重送一次查詢,而不是只查一次就等到搜尋時間結束。
+    // 視窗重新回到前景時的快速搜尋秒數:不用跑完整個設定的秒數,短暫密集查詢幾次就足以讓新上線的裝置出現。
+    private static readonly TimeSpan ActivationSearchDuration = TimeSpan.FromSeconds(8);
+
+    // 快速搜尋期間內每隔幾秒就重送一次查詢,而不是只查一次就等到搜尋時間結束。
     // 兩台裝置如果幾乎同時啟動,單次查詢很容易在對方還沒完成廣播註冊前就送出而互相找不到對方,
     // 定期重試可以避開這種啟動時機的競爭問題。
     private static readonly TimeSpan SearchQueryInterval = TimeSpan.FromSeconds(1);
 
+    // 快速搜尋結束後,背景持續搜尋的查詢間隔。
+    private static readonly TimeSpan BackgroundSearchInterval = TimeSpan.FromSeconds(10);
+
     private CancellationTokenSource? _searchCts;
+    private bool _isFastSearching;
 
-    private void AdvertiseCurrentName()
+    /// <summary>目前連線對象的位址(正規化成 IPv4 字串),同時存在 DevicesItemsControl.Tag 供卡片顯示「已連線」。</summary>
+    private string? _connectedAddress;
+
+    private void AdvertiseCurrentName() => _discovery.Advertise(MyDeviceName, _connection.Port);
+
+    // ===================== 裝置名稱(Hero 上的就地編輯) =====================
+
+    private void EditDeviceNameButton_Click(object sender, RoutedEventArgs e) => BeginEditDeviceName();
+
+    private void BeginEditDeviceName()
     {
-        var name = string.IsNullOrWhiteSpace(DeviceNameTextBox.Text)
-            ? Environment.MachineName
-            : DeviceNameTextBox.Text.Trim();
+        DeviceNameTextBox.Text = MyDeviceName;
+        DeviceNameDisplayPanel.Visibility = Visibility.Collapsed;
+        DeviceNameEditPanel.Visibility = Visibility.Visible;
+        Dispatcher.BeginInvoke(() =>
+        {
+            DeviceNameTextBox.Focus();
+            DeviceNameTextBox.SelectAll();
+        }, System.Windows.Threading.DispatcherPriority.Input);
+    }
 
-        _discovery.Advertise(name, _connection.Port);
+    private void CommitDeviceName()
+    {
+        ApplyDeviceName(DeviceNameTextBox.Text);
+        EndEditDeviceName();
+    }
+
+    /// <summary>套用並儲存新的裝置名稱,馬上用新名稱重新廣播(引導頁取名也走這裡)。</summary>
+    private void ApplyDeviceName(string? name)
+    {
+        var previous = MyDeviceName;
+        var applied = _deviceSettings.SetDeviceName(name);
+        DeviceNameText.Text = applied;
+        DeviceNameTextBox.Text = applied;
+
+        if (applied != previous)
+        {
+            AdvertiseCurrentName();
+            AppendLog($"裝置名稱已改為「{applied}」。");
+        }
+    }
+
+    private void EndEditDeviceName()
+    {
+        DeviceNameEditPanel.Visibility = Visibility.Collapsed;
+        DeviceNameDisplayPanel.Visibility = Visibility.Visible;
+        Keyboard_ClearFocus();
     }
 
     private void DeviceNameTextBox_KeyDown(object sender, KeyEventArgs e)
     {
         if (e.Key == Key.Enter)
         {
-            AdvertiseCurrentName();
-            Keyboard_ClearFocus();
+            CommitDeviceName();
+            e.Handled = true;
+        }
+        else if (e.Key == Key.Escape)
+        {
+            EndEditDeviceName();
+            e.Handled = true;
         }
     }
 
-    private void DeviceNameTextBox_LostFocus(object sender, RoutedEventArgs e) => AdvertiseCurrentName();
+    private void SaveDeviceNameButton_Click(object sender, RoutedEventArgs e) => CommitDeviceName();
 
-    /// <summary>自動搜尋 30 秒後停止,並顯示手動重新整理按鈕。</summary>
-    private void StartSearchCycle()
+    private void CancelDeviceNameButton_Click(object sender, RoutedEventArgs e) => EndEditDeviceName();
+
+    // ===================== 搜尋 =====================
+
+    /// <summary>
+    /// 開始一輪搜尋:先在 <paramref name="fastDuration"/> 內每秒查詢一次(快速搜尋),
+    /// 之後改成每 <see cref="BackgroundSearchInterval"/> 在背景持續查詢,直到下一輪搜尋或視窗關閉。
+    /// </summary>
+    private void StartSearchCycle(TimeSpan? fastDuration = null)
     {
         _searchCts?.Cancel();
         var cts = new CancellationTokenSource();
         _searchCts = cts;
 
-        RefreshButton.Visibility = Visibility.Collapsed;
-        SearchProgressBar.Visibility = Visibility.Visible;
-        SearchStatusText.Text = "正在搜尋裝置...";
-        UpdateEmptyState();
-
-        _ = RunSearchCycleAsync(cts);
+        SetFastSearching(true);
+        _ = RunSearchCycleAsync(fastDuration ?? FastSearchDuration, cts);
     }
 
-    private async Task RunSearchCycleAsync(CancellationTokenSource cts)
+    private async Task RunSearchCycleAsync(TimeSpan fastDuration, CancellationTokenSource cts)
     {
-        var deadline = DateTime.UtcNow + AutoSearchDuration;
+        var deadline = DateTime.UtcNow + fastDuration;
 
         try
         {
@@ -74,21 +130,36 @@ public partial class MainWindow
 
                 await Task.Delay(remaining < SearchQueryInterval ? remaining : SearchQueryInterval, cts.Token);
             }
+
+            SetFastSearching(false);
+
+            while (true)
+            {
+                await Task.Delay(BackgroundSearchInterval, cts.Token);
+                _discovery.Refresh();
+            }
         }
         catch (OperationCanceledException)
         {
-            return; // 被新的搜尋週期或斷線流程取消,不用再處理
+            // 被新的搜尋週期取消(或視窗關閉),不用再處理。
         }
+    }
 
-        if (cts.IsCancellationRequested)
-        {
-            return;
-        }
-
-        SearchProgressBar.Visibility = Visibility.Collapsed;
-        SearchStatusText.Text = "搜尋已停止";
-        RefreshButton.Visibility = Visibility.Visible;
+    private void SetFastSearching(bool fast)
+    {
+        _isFastSearching = fast;
+        SearchProgressBar.Visibility = fast ? Visibility.Visible : Visibility.Collapsed;
+        SearchStatusText.Text = fast ? "正在搜尋..." : "持續在背景搜尋中";
         UpdateEmptyState();
+    }
+
+    /// <summary>視窗回到前景時(例如從系統匣叫出來)主動密集搜尋一小段時間,讓剛上線的裝置盡快出現。</summary>
+    private void MainWindow_Activated(object? sender, EventArgs e)
+    {
+        if (IsLoaded && !_isFastSearching)
+        {
+            StartSearchCycle(ActivationSearchDuration < FastSearchDuration ? ActivationSearchDuration : FastSearchDuration);
+        }
     }
 
     private void RefreshButton_Click(object sender, RoutedEventArgs e)
@@ -99,37 +170,177 @@ public partial class MainWindow
 
     private void UpdateEmptyState()
     {
-        var searching = SearchProgressBar.Visibility == Visibility.Visible;
-        EmptyStateStackPanel.Visibility = !searching && _devices.Count == 0
-            ? Visibility.Visible
-            : Visibility.Collapsed;
+        EmptyStateStackPanel.Visibility = _devices.Count == 0 ? Visibility.Visible : Visibility.Collapsed;
     }
+
+    // ===================== 主動連線(等待對方接受) =====================
 
     private async void ConnectToDevice_Click(object sender, RoutedEventArgs e)
     {
-        if (sender is not Button { Tag: DiscoveredDevice device } button)
+        if (sender is not Button { Tag: DiscoveredDevice device })
         {
             return;
         }
 
-        button.IsEnabled = false;
-        try
-        {
-            var myName = string.IsNullOrWhiteSpace(DeviceNameTextBox.Text)
-                ? Environment.MachineName
-                : DeviceNameTextBox.Text.Trim();
+        await ConnectWithWaitingDialogAsync(device);
+    }
 
-            var accepted = await _connection.RequestConnectionAsync(device.Address, device.Port, myName, device.DisplayName);
-            if (!accepted)
-            {
-                MainSnackbar.MessageQueue?.Enqueue($"{device.DisplayName} 未接受連線請求。");
-            }
-        }
-        finally
+    /// <summary>送出連線請求,同時顯示「正在等待對方接受」對話框(可以取消);
+    /// 失敗時依原因(被拒絕/沒回應/連不到)顯示具體的說明與建議,而不是只有一句「未接受」。</summary>
+    private async Task ConnectWithWaitingDialogAsync(DiscoveredDevice device)
+    {
+        using var cts = new CancellationTokenSource();
+        var dialogShown = false;
+
+        if (!DialogHost.IsDialogOpen(RootDialogIdentifier))
         {
-            button.IsEnabled = true;
+            var dialog = BuildWaitingForAcceptDialog(device.DisplayName, () => cts.Cancel());
+            _ = DialogHost.Show(dialog, RootDialogIdentifier);
+            dialogShown = true;
+        }
+
+        var outcome = await _connection.RequestConnectionWithOutcomeAsync(
+            device.Address, device.Port, MyDeviceName, device.DisplayName, cts.Token);
+
+        if (dialogShown && DialogHost.IsDialogOpen(RootDialogIdentifier))
+        {
+            DialogHost.Close(RootDialogIdentifier);
+        }
+
+        switch (outcome)
+        {
+            case ConnectionRequestOutcome.Rejected:
+                await ShowMessageDialogAsync(PackIconKind.AccountCancelOutline, $"「{device.DisplayName}」拒絕了連線",
+                    "對方按下了「拒絕」。如果是誤按,可以再試一次。");
+                break;
+            case ConnectionRequestOutcome.Timeout:
+                await ShowMessageDialogAsync(PackIconKind.TimerSandEmpty, $"「{device.DisplayName}」沒有回應",
+                    "對方沒有在時間內按下接受。請確認對方的畫面上有看到連線請求(Android 可能在通知列)。");
+                break;
+            case ConnectionRequestOutcome.Unreachable:
+                await ShowMessageDialogAsync(PackIconKind.LanDisconnect, $"連不到「{device.DisplayName}」",
+                    "請確認對方仍開著 ConnectIt,而且兩台裝置連在同一個 Wi-Fi 或區網。也可能是防火牆擋下了連線。");
+                break;
+            case ConnectionRequestOutcome.Cancelled:
+                MainSnackbar.MessageQueue?.Enqueue("已取消連線請求。");
+                break;
         }
     }
+
+    private const string RootDialogIdentifier = "RootDialog";
+
+    private FrameworkElement BuildWaitingForAcceptDialog(string deviceName, Action onCancel)
+    {
+        var panel = new StackPanel { Width = 320 };
+        panel.Children.Add(new ContentControl
+        {
+            Style = (Style)FindResource("Brand.Radar"),
+            Width = 130,
+            Height = 130,
+            HorizontalAlignment = HorizontalAlignment.Center,
+            Content = new PackIcon { Kind = PackIconKind.LanConnect, Width = 26, Height = 26 },
+        });
+        panel.Children.Add(new TextBlock
+        {
+            Text = $"正在等待「{deviceName}」接受",
+            Style = (Style)FindResource("Brand.Text.Title"),
+            TextWrapping = TextWrapping.Wrap,
+            TextAlignment = TextAlignment.Center,
+            Margin = new Thickness(0, 12, 0, 6),
+        });
+        panel.Children.Add(new TextBlock
+        {
+            Text = "請在對方的裝置上按下「接受」。",
+            Style = (Style)FindResource("Brand.Text.Caption"),
+            TextAlignment = TextAlignment.Center,
+            Margin = new Thickness(0, 0, 0, 20),
+        });
+
+        var cancelButton = new Button
+        {
+            Content = "取消",
+            Style = (Style)FindResource("Brand.Button.Ghost"),
+            HorizontalAlignment = HorizontalAlignment.Stretch,
+        };
+        System.Windows.Automation.AutomationProperties.SetAutomationId(cancelButton, "CancelConnectButton");
+        cancelButton.Click += (_, _) =>
+        {
+            cancelButton.IsEnabled = false;
+            onCancel();
+        };
+        panel.Children.Add(cancelButton);
+
+        return WrapInDialogCard(panel);
+    }
+
+    /// <summary>顯示一個只有「知道了」按鈕的說明對話框。已經有其他對話框開著時改用 Snackbar,避免重疊開啟。</summary>
+    private Task ShowMessageDialogAsync(PackIconKind icon, string title, string message)
+    {
+        if (DialogHost.IsDialogOpen(RootDialogIdentifier))
+        {
+            MainSnackbar.MessageQueue?.Enqueue($"{title}。{message}");
+            return Task.CompletedTask;
+        }
+
+        var panel = new StackPanel { Width = 340 };
+        panel.Children.Add(new Border
+        {
+            Style = (Style)FindResource("Brand.IconTile"),
+            Width = 56,
+            Height = 56,
+            CornerRadius = new CornerRadius(18),
+            HorizontalAlignment = HorizontalAlignment.Center,
+            Child = new PackIcon
+            {
+                Kind = icon,
+                Width = 28,
+                Height = 28,
+                HorizontalAlignment = HorizontalAlignment.Center,
+                VerticalAlignment = VerticalAlignment.Center,
+            },
+        });
+        panel.Children.Add(new TextBlock
+        {
+            Text = title,
+            Style = (Style)FindResource("Brand.Text.Title"),
+            TextWrapping = TextWrapping.Wrap,
+            TextAlignment = TextAlignment.Center,
+            Margin = new Thickness(0, 16, 0, 8),
+        });
+        panel.Children.Add(new TextBlock
+        {
+            Text = message,
+            Style = (Style)FindResource("Brand.Text.Caption"),
+            FontSize = 13,
+            TextAlignment = TextAlignment.Center,
+            Margin = new Thickness(0, 0, 0, 22),
+        });
+
+        var okButton = new Button
+        {
+            Content = "知道了",
+            Style = (Style)FindResource("Brand.Button.Gradient"),
+            HorizontalAlignment = HorizontalAlignment.Stretch,
+        };
+        okButton.Click += (_, _) => DialogHost.Close(RootDialogIdentifier);
+        panel.Children.Add(okButton);
+
+        return DialogHost.Show(WrapInDialogCard(panel), RootDialogIdentifier);
+    }
+
+    private Border WrapInDialogCard(UIElement content) => new()
+    {
+        Background = (Brush)FindResource("Brand.Brush.Surface"),
+        BorderBrush = (Brush)FindResource("Brand.Brush.Outline"),
+        BorderThickness = new Thickness(1),
+        CornerRadius = new CornerRadius(24),
+        Padding = new Thickness(28),
+        HorizontalAlignment = HorizontalAlignment.Center,
+        VerticalAlignment = VerticalAlignment.Center,
+        Child = content,
+    };
+
+    // ===================== 被動連線(別人連進來) =====================
 
     private void OnConnectionRequested(object? sender, ConnectionRequestedEventArgs e)
     {
@@ -146,6 +357,17 @@ public partial class MainWindow
                 e.Respond(true);
                 return;
             }
+
+            if (DialogHost.IsDialogOpen(RootDialogIdentifier))
+            {
+                // 正在顯示其他對話框(例如自己也正在等待別人接受)時,同時只能處理一件事,直接婉拒。
+                AppendLog($"目前正在處理其他操作,已自動婉拒「{e.RequesterName}」的連線請求。");
+                e.Respond(false);
+                return;
+            }
+
+            // 視窗藏在系統匣時把它叫出來,不然使用者看不到確認對話框。
+            ((App)Application.Current).ShowMainWindow();
 
             var dialogResultTask = ShowConnectionRequestDialog(e.RequesterName, e.RequesterAddress);
             _ = RespondWhenDialogClosedAsync(dialogResultTask, e, _trustedDevices);
@@ -179,92 +401,106 @@ public partial class MainWindow
     /// (是否接受、是否同時勾選了「信任此裝置」)。</summary>
     private Task<(bool Accepted, bool Trust)> ShowConnectionRequestDialog(string requesterName, IPAddress address)
     {
-        var panel = new StackPanel { MinWidth = 280, HorizontalAlignment = HorizontalAlignment.Center };
-        panel.Children.Add(new PackIcon
+        var panel = new StackPanel { Width = 340 };
+        panel.Children.Add(new Border
         {
-            Kind = PackIconKind.AccountQuestion,
-            Width = 40,
-            Height = 40,
+            Style = (Style)FindResource("Brand.Avatar"),
+            Width = 72,
+            Height = 72,
+            CornerRadius = new CornerRadius(36),
             HorizontalAlignment = HorizontalAlignment.Center,
-            Foreground = (Brush)FindResource("MaterialDesign.Brush.Primary"),
+            Child = new PackIcon
+            {
+                Kind = PackIconKind.Devices,
+                Width = 34,
+                Height = 34,
+                HorizontalAlignment = HorizontalAlignment.Center,
+                VerticalAlignment = VerticalAlignment.Center,
+            },
         });
         panel.Children.Add(new TextBlock
         {
-            Text = $"「{requesterName}」想要與你連線",
-            FontSize = 16,
-            FontWeight = FontWeights.Medium,
-            TextWrapping = TextWrapping.Wrap,
-            TextAlignment = TextAlignment.Center,
+            Text = "連線請求",
+            Style = (Style)FindResource("Brand.Text.Overline"),
+            HorizontalAlignment = HorizontalAlignment.Center,
             Margin = new Thickness(0, 16, 0, 4),
         });
         panel.Children.Add(new TextBlock
         {
-            Text = address.ToString(),
-            Opacity = 0.6,
-            FontSize = 12,
+            Text = $"「{requesterName}」想要與你連線",
+            Style = (Style)FindResource("Brand.Text.Title"),
+            TextWrapping = TextWrapping.Wrap,
+            TextAlignment = TextAlignment.Center,
+            Margin = new Thickness(0, 0, 0, 4),
+        });
+        panel.Children.Add(new TextBlock
+        {
+            Text = NormalizeAddress(address),
+            Style = (Style)FindResource("Brand.Text.Caption"),
             HorizontalAlignment = HorizontalAlignment.Center,
-            Margin = new Thickness(0, 0, 0, 12),
+            Margin = new Thickness(0, 0, 0, 16),
         });
 
         var trustCheckBox = new CheckBox
         {
             Content = "信任此裝置,之後自動接受",
             HorizontalAlignment = HorizontalAlignment.Center,
-            Margin = new Thickness(0, 0, 0, 16),
+            Margin = new Thickness(0, 0, 0, 20),
         };
         panel.Children.Add(trustCheckBox);
 
-        var buttonPanel = new StackPanel { Orientation = Orientation.Horizontal, HorizontalAlignment = HorizontalAlignment.Center };
+        var buttonGrid = new Grid();
+        buttonGrid.ColumnDefinitions.Add(new ColumnDefinition());
+        buttonGrid.ColumnDefinitions.Add(new ColumnDefinition());
         var rejectButton = new Button
         {
             Content = "拒絕",
-            Style = (Style)FindResource("MaterialDesignFlatButton"),
-            Margin = new Thickness(0, 0, 8, 0),
+            Style = (Style)FindResource("Brand.Button.Ghost"),
+            Margin = new Thickness(0, 0, 6, 0),
         };
         var acceptButton = new Button
         {
             Content = "接受",
-            Style = (Style)FindResource("MaterialDesignRaisedButton"),
+            Style = (Style)FindResource("Brand.Button.Gradient"),
+            Margin = new Thickness(6, 0, 0, 0),
         };
+        Grid.SetColumn(acceptButton, 1);
         System.Windows.Automation.AutomationProperties.SetAutomationId(rejectButton, "RejectConnectionButton");
         System.Windows.Automation.AutomationProperties.SetAutomationId(acceptButton, "AcceptConnectionButton");
-        buttonPanel.Children.Add(rejectButton);
-        buttonPanel.Children.Add(acceptButton);
-        panel.Children.Add(buttonPanel);
+        buttonGrid.Children.Add(rejectButton);
+        buttonGrid.Children.Add(acceptButton);
+        panel.Children.Add(buttonGrid);
 
         var tcs = new TaskCompletionSource<(bool Accepted, bool Trust)>();
         rejectButton.Click += (_, _) =>
         {
-            DialogHost.Close("RootDialog");
+            DialogHost.Close(RootDialogIdentifier);
             tcs.TrySetResult((false, false));
         };
         acceptButton.Click += (_, _) =>
         {
-            DialogHost.Close("RootDialog");
+            DialogHost.Close(RootDialogIdentifier);
             tcs.TrySetResult((true, trustCheckBox.IsChecked == true));
         };
 
-        var card = new Border
-        {
-            Background = (Brush)FindResource("MaterialDesignPaper"),
-            CornerRadius = new CornerRadius(4),
-            Padding = new Thickness(24),
-            HorizontalAlignment = HorizontalAlignment.Center,
-            VerticalAlignment = VerticalAlignment.Center,
-            Child = panel,
-        };
-
-        _ = DialogHost.Show(card, "RootDialog");
+        _ = DialogHost.Show(WrapInDialogCard(panel), RootDialogIdentifier);
+        acceptButton.Focus();
         return tcs.Task;
     }
+
+    // ===================== 連線狀態 =====================
 
     private void OnConnected(object? sender, ConnectedEventArgs e)
     {
         Dispatcher.Invoke(() =>
         {
-            _searchCts?.Cancel();
-
+            _connectedAddress = NormalizeAddress(e.RemoteAddress);
+            DevicesItemsControl.Tag = _connectedAddress;
             ConnectedDeviceNameText.Text = e.RemoteName;
+            ConnectedDeviceAddressText.Text = _connectedAddress;
+            _transferHistory.Clear();
+            HideFileTransferPanel();
+
             NavListBox.SelectedIndex = 0;
             SetActivePage(AppPage.Devices);
 
@@ -273,10 +509,18 @@ public partial class MainWindow
         });
     }
 
+    /// <summary>依目前是否已連線,顯示/收起裝置頁右側的「目前連線」面板。</summary>
+    private void UpdateConnectedPanel()
+    {
+        var connected = _connection.IsConnected;
+        ConnectedViewRoot.Visibility = connected ? Visibility.Visible : Visibility.Collapsed;
+        ConnectedPanelColumn.Width = connected ? new GridLength(400) : new GridLength(0);
+    }
+
     private void DisconnectButton_Click(object sender, RoutedEventArgs e)
     {
         _connection.Disconnect();
-        ReturnToDiscoveryView("已中斷連線。");
+        OnConnectionEnded("已中斷連線。");
     }
 
     private void OnRemoteDisconnected(object? sender, EventArgs e)
@@ -284,8 +528,8 @@ public partial class MainWindow
         Dispatcher.Invoke(() =>
         {
             var peerName = ConnectedDeviceNameText.Text;
-            MainSnackbar.MessageQueue?.Enqueue("對方已中斷連線。");
-            ReturnToDiscoveryView("對方已中斷連線。");
+            MainSnackbar.MessageQueue?.Enqueue($"{peerName} 已中斷連線。");
+            OnConnectionEnded("對方已中斷連線。");
             // NotifyIcon.ShowBalloonTip 在 tipText 為空字串時會丟 ArgumentException——這裡是從
             // ConnectionService 背景執行緒觸發的事件,例外被吃掉不會有任何錯誤訊息,氣泡也就永遠不會顯示,
             // 所以訊息一定要給非空字串。
@@ -293,18 +537,23 @@ public partial class MainWindow
         });
     }
 
-    /// <summary>不管是自己按了中斷連線,還是對方把連線關掉,都回到搜尋畫面並重新開始廣播/搜尋。</summary>
-    private void ReturnToDiscoveryView(string logMessage)
+    /// <summary>不管是自己按了中斷連線,還是對方把連線關掉:收起連線面板(裝置清單一直都在),
+    /// 用目前的名稱重新廣播,並重新快速搜尋一輪。</summary>
+    private void OnConnectionEnded(string logMessage)
     {
-        NavListBox.SelectedIndex = 0;
-        SetActivePage(AppPage.Devices);
+        _connectedAddress = null;
+        DevicesItemsControl.Tag = null;
+        HideFileTransferPanel();
+        UpdateConnectedPanel();
 
-        _devices.Clear();
         AdvertiseCurrentName();
         StartSearchCycle();
 
         AppendLog(logMessage);
     }
+
+    private static string NormalizeAddress(IPAddress address) =>
+        (address.IsIPv4MappedToIPv6 ? address.MapToIPv4() : address).ToString();
 
     private void OnDeviceDiscovered(object? sender, DiscoveredDevice device)
     {
