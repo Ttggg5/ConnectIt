@@ -31,11 +31,7 @@ public partial class MainWindow
     private int _remoteShuffleSeed;
 
     // 自動播放下一部:主機端不一定真的在播放影片,所以「播完了」是用碼表外插的位置跟探測到的總長度
-    // 比較出來的(見 HandleRemoteAutoplay),不是播放器的 ended 事件。倒數期間記著要切到哪一部,
-    // 倒數到了才真的 SetVideo,中途使用者手動操作(選片/播放/拖曳…)就取消。
-    private int _remoteAutoplayCountdownSeconds = VideoServerSettingsService.DefaultAutoplayCountdownSeconds;
-    private DateTime? _remoteAutoplayAtUtc;
-    private string? _remoteAutoplayNextPath;
+    // 比較出來的(見 HandleRemoteAutoplay),不是播放器的 ended 事件;判斷播完後直接切到下一部。
 
     // 影片庫目前顯示的卡片(已套用排序/隨機播放與搜尋關鍵字),以及正在顯示縮圖的「正在播放」影片。
     private List<RemoteVideoItem> _remoteVideoItems = [];
@@ -53,7 +49,6 @@ public partial class MainWindow
     private void SetRemoteControlEnabled(bool enabled)
     {
         _videoStreaming.ControlState.SetEnabled(enabled);
-        CancelRemoteAutoplay();
         UpdateRemoteControlModeUi(enabled);
         RefreshRemoteControlUi();
     }
@@ -99,7 +94,6 @@ public partial class MainWindow
 
     private void SelectRemoteVideo(string relativePath)
     {
-        CancelRemoteAutoplay();
         _videoStreaming.ControlState.SetVideo(relativePath);
         UpdateRemoteDurationAsync(relativePath);
         RefreshRemoteControlUi();
@@ -166,51 +160,14 @@ public partial class MainWindow
         RefreshRemoteControlPlaylist();
     }
 
-    private void RemoteControlAutoplayCheckBox_Click(object sender, RoutedEventArgs e)
-    {
-        if (RemoteControlAutoplayCheckBox.IsChecked != true)
-        {
-            CancelRemoteAutoplay();
-        }
-    }
-
-    private void RemoteControlCancelAutoplayButton_Click(object sender, RoutedEventArgs e) => CancelRemoteAutoplay();
-
-    private void CancelRemoteAutoplay()
-    {
-        _remoteAutoplayAtUtc = null;
-        _remoteAutoplayNextPath = null;
-        RemoteControlAutoplayPanel.Visibility = Visibility.Collapsed;
-    }
-
     /// <summary>
     /// 由 <see cref="RefreshRemoteControlUi"/> 定期呼叫:目前選片(外插後的)位置走到探測出的總長度時,
-    /// 先把狀態定在片尾、改成暫停(不然碼表會一直往後算,超過影片長度),勾了「自動播放下一部」
-    /// 而且清單還有下一部的話就開始倒數,倒數結束才切過去。總長度探測失敗(null)時無從判斷
-    /// 播完了沒有,這種影片就不會自動接下一部。
+    /// 勾了「自動播放下一部」而且清單還有下一部就直接切過去;否則把狀態定在片尾、改成暫停
+    /// (不然碼表會一直往後算,超過影片長度)。總長度探測失敗(null)時無從判斷播完了沒有,
+    /// 這種影片就不會自動接下一部。
     /// </summary>
     private void HandleRemoteAutoplay()
     {
-        if (_remoteAutoplayAtUtc is { } autoplayAt)
-        {
-            var secondsLeft = (int)Math.Ceiling((autoplayAt - DateTime.UtcNow).TotalSeconds);
-            if (secondsLeft <= 0)
-            {
-                var nextPath = _remoteAutoplayNextPath;
-                CancelRemoteAutoplay();
-                if (nextPath != null)
-                {
-                    SelectRemoteVideo(nextPath);
-                }
-            }
-            else
-            {
-                ShowRemoteAutoplayCountdown(secondsLeft);
-            }
-
-            return;
-        }
-
         var snapshot = _videoStreaming.ControlState.Snapshot();
         if (!snapshot.Enabled ||
             !snapshot.IsPlaying ||
@@ -222,22 +179,14 @@ public partial class MainWindow
             return;
         }
 
-        _videoStreaming.ControlState.SetPlaying(false);
-        _videoStreaming.ControlState.Seek(durationMs);
-
         if (RemoteControlAutoplayCheckBox.IsChecked == true && GetRemoteNeighborPath(1) is { } next)
         {
-            _remoteAutoplayNextPath = next;
-            _remoteAutoplayAtUtc = DateTime.UtcNow.AddSeconds(_remoteAutoplayCountdownSeconds);
-            ShowRemoteAutoplayCountdown(_remoteAutoplayCountdownSeconds);
+            SelectRemoteVideo(next);
+            return;
         }
-    }
 
-    private void ShowRemoteAutoplayCountdown(int secondsLeft)
-    {
-        var nextName = _videoStreaming.Manifest.FirstOrDefault(m => m.RelativePath == _remoteAutoplayNextPath)?.Name;
-        RemoteControlAutoplayText.Text = $"即將播放下一部:{nextName}({secondsLeft})";
-        RemoteControlAutoplayPanel.Visibility = Visibility.Visible;
+        _videoStreaming.ControlState.SetPlaying(false);
+        _videoStreaming.ControlState.Seek(durationMs);
     }
 
     /// <summary>探測目前選片的總長度(見 <see cref="VideoDurationProbe"/>),供時間軸畫用。非同步,
@@ -260,7 +209,6 @@ public partial class MainWindow
 
     private void RemoteControlPlayPauseButton_Click(object sender, RoutedEventArgs e)
     {
-        CancelRemoteAutoplay();
         var snapshot = _videoStreaming.ControlState.Snapshot();
 
         // 已經停在片尾時按播放就從頭開始,不然一按下去馬上又被判定成「播完了」。
@@ -275,7 +223,6 @@ public partial class MainWindow
 
     private void RemoteControlRewindButton_Click(object sender, RoutedEventArgs e)
     {
-        CancelRemoteAutoplay();
         var snapshot = _videoStreaming.ControlState.Snapshot();
         _videoStreaming.ControlState.Seek(Math.Max(0, snapshot.PositionMs - 10_000));
         RefreshRemoteControlUi();
@@ -283,7 +230,6 @@ public partial class MainWindow
 
     private void RemoteControlForwardButton_Click(object sender, RoutedEventArgs e)
     {
-        CancelRemoteAutoplay();
         var snapshot = _videoStreaming.ControlState.Snapshot();
         _videoStreaming.ControlState.Seek(snapshot.PositionMs + 10_000);
         RefreshRemoteControlUi();
@@ -339,7 +285,6 @@ public partial class MainWindow
         _isDraggingRemoteTimeline = false;
         if (RemoteControlTimelineSlider.IsEnabled)
         {
-            CancelRemoteAutoplay();
             _videoStreaming.ControlState.Seek((long)RemoteControlTimelineSlider.Value);
         }
 

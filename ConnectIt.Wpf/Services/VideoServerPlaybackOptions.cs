@@ -16,7 +16,5 @@ public sealed record VideoServerPlaybackOptions
 
     public double DefaultSpeed { get; init; } = VideoServerSettingsService.DefaultPlaybackSpeed;
 
-    public int AutoplayCountdownSeconds { get; init; } = VideoServerSettingsService.DefaultAutoplayCountdownSeconds;
-
     public IReadOnlyCollection<string> ExtraExtensions { get; init; } = [];
 }

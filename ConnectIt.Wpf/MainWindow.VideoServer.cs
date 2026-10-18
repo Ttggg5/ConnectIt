@@ -62,7 +62,6 @@ public partial class MainWindow
             Shuffle = _videoServerSettings.Shuffle,
             DefaultVolumePercent = _videoServerSettings.DefaultVolume,
             DefaultSpeed = _videoServerSettings.DefaultSpeed,
-            AutoplayCountdownSeconds = _videoServerSettings.AutoplayCountdownSeconds,
             ExtraExtensions = _videoServerSettings.ExtraExtensions,
         };
         _videoStreaming.Start(path, name, options);
@@ -90,8 +89,6 @@ public partial class MainWindow
         // 排序/隨機播放/自動播放的初始值沿用設定頁的影片伺服器預設值,之後在遙控面板上的調整
         // 只影響這一次分享,不會寫回設定。
         _remoteShuffleSeed = Random.Shared.Next();
-        _remoteAutoplayCountdownSeconds = options.AutoplayCountdownSeconds;
-        CancelRemoteAutoplay();
         SelectComboBoxItemByTag(RemoteControlSortComboBox, options.DefaultSort);
         RemoteControlShuffleCheckBox.IsChecked = options.Shuffle;
         RemoteControlAutoplayCheckBox.IsChecked = options.AutoplayNext;
@@ -120,7 +117,6 @@ public partial class MainWindow
         VideoShareInfoCard.Visibility = Visibility.Collapsed;
         VideoServerQrImage.Source = null;
 
-        CancelRemoteAutoplay();
         RemoteControlCard.Visibility = Visibility.Collapsed;
         RemoteControlVideoListItemsControl.ItemsSource = null;
         RemoteControlVideoListItemsControl.Tag = null;

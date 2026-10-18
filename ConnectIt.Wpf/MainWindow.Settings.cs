@@ -46,7 +46,6 @@ public partial class MainWindow
             SelectComboBoxItemByTag(VideoDefaultSortComboBox, _videoServerSettings.DefaultSort);
             VideoAutoplayNextCheckBox.IsChecked = _videoServerSettings.AutoplayNext;
             VideoShuffleCheckBox.IsChecked = _videoServerSettings.Shuffle;
-            VideoAutoplayCountdownTextBox.Text = _videoServerSettings.AutoplayCountdownSeconds.ToString();
             VideoDefaultVolumeSlider.Value = _videoServerSettings.DefaultVolume;
             VideoDefaultVolumeText.Text = $"{_videoServerSettings.DefaultVolume}%";
             SelectComboBoxItemByTag(VideoDefaultSpeedComboBox, _videoServerSettings.DefaultSpeed.ToString(System.Globalization.CultureInfo.InvariantCulture));
@@ -454,36 +453,6 @@ public partial class MainWindow
         {
             FlashSaved(VideoSettingsSavedBadge);
         }
-    }
-
-    private void VideoAutoplayCountdownTextBox_PreviewTextInput(object sender, TextCompositionEventArgs e)
-    {
-        e.Handled = !e.Text.All(char.IsDigit);
-    }
-
-    private void VideoAutoplayCountdownTextBox_TextChanged(object sender, TextChangedEventArgs e) =>
-        DebounceSettingsSave(VideoAutoplayCountdownTextBox, () => ApplyVideoAutoplayCountdown(commit: false));
-
-    private void VideoAutoplayCountdownTextBox_KeyDown(object sender, KeyEventArgs e)
-    {
-        if (e.Key == Key.Enter)
-        {
-            ApplyVideoAutoplayCountdown(commit: true);
-            Keyboard_ClearFocus();
-        }
-    }
-
-    private void VideoAutoplayCountdownTextBox_LostFocus(object sender, RoutedEventArgs e) => ApplyVideoAutoplayCountdown(commit: true);
-
-    private void ApplyVideoAutoplayCountdown(bool commit)
-    {
-        FlushSettingsDebounce(VideoAutoplayCountdownTextBox);
-        ValidateAndSaveField(
-            VideoAutoplayCountdownTextBox, VideoAutoplayCountdownErrorText,
-            SettingsValidation.ValidateAutoplayCountdown(VideoAutoplayCountdownTextBox.Text),
-            _videoServerSettings.SetAutoplayCountdownSeconds,
-            () => _videoServerSettings.AutoplayCountdownSeconds.ToString(),
-            VideoSettingsSavedBadge, commit);
     }
 
     private void VideoDefaultVolumeSlider_ValueChanged(object sender, RoutedPropertyChangedEventArgs<double> e)

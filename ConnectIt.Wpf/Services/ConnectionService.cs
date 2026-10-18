@@ -43,6 +43,21 @@ public sealed class ConnectionService : IDisposable
     private TcpClient? _activeClient;
     private CancellationTokenSource? _monitorCts;
 
+    // 心跳:連線期間每隔 HeartbeatInterval 送一個 "ping" 控制訊息;只要確認過對方也會送心跳
+    // (收到過對方的 ping),超過 HeartbeatTimeout 完全沒收到對方任何訊框,就判定連線已經斷了。
+    // 用來偵測「對方沒有正常關閉連線」的情況(程式當掉、直接關機、Wi-Fi 斷掉…)——這時不會有
+    // TCP FIN,讀取會一直卡著,不靠心跳就永遠不知道對方已經不在了。
+    // 只在對方也送心跳時才啟用逾時判斷,舊版(不送心跳)的對方不會因為閒置太久被誤判斷線。
+    private long _lastReceivedAtMs;
+    private volatile bool _peerSendsHeartbeat;
+    private int _heartbeatWriteInFlight;
+
+    /// <summary>送出心跳的間隔。</summary>
+    public TimeSpan HeartbeatInterval { get; set; } = TimeSpan.FromSeconds(4);
+
+    /// <summary>超過這麼久沒收到對方任何訊框(而且對方會送心跳)就判定連線中斷。</summary>
+    public TimeSpan HeartbeatTimeout { get; set; } = TimeSpan.FromSeconds(15);
+
     // 保護「送出訊框」這個動作本身,避免背景的檔案傳送迴圈跟使用者觸發的取消/控制訊息同時寫入同一個 socket,
     // 導致兩段內容在網路上交錯、對方解析出不完整的訊框。
     private readonly SemaphoreSlim _writeLock = new(1, 1);
@@ -335,8 +350,82 @@ public sealed class ConnectionService : IDisposable
         _monitorCts?.Cancel();
         var cts = new CancellationTokenSource();
         _monitorCts = cts;
+
+        _peerSendsHeartbeat = false;
+        Volatile.Write(ref _lastReceivedAtMs, Environment.TickCount64);
+        EnableTcpKeepAlive(client);
+
         _ = MonitorConnectionAsync(client, cts.Token);
+        _ = HeartbeatLoopAsync(client, cts.Token);
     }
+
+    /// <summary>
+    /// 作業系統層級的保險:就算對方是不送心跳的舊版本,TCP keepalive 也會在對方消失約 20 秒後
+    /// 讓讀取失敗,觸發一般的斷線處理。部分平台不支援調整這些參數,失敗就維持系統預設值。
+    /// </summary>
+    private static void EnableTcpKeepAlive(TcpClient client)
+    {
+        try
+        {
+            var socket = client.Client;
+            socket.SetSocketOption(SocketOptionLevel.Socket, SocketOptionName.KeepAlive, true);
+            socket.SetSocketOption(SocketOptionLevel.Tcp, SocketOptionName.TcpKeepAliveTime, 10);
+            socket.SetSocketOption(SocketOptionLevel.Tcp, SocketOptionName.TcpKeepAliveInterval, 3);
+            socket.SetSocketOption(SocketOptionLevel.Tcp, SocketOptionName.TcpKeepAliveRetryCount, 3);
+        }
+        catch
+        {
+            // 不支援就算了,還有應用層心跳。
+        }
+    }
+
+    private async Task HeartbeatLoopAsync(TcpClient client, CancellationToken token)
+    {
+        try
+        {
+            while (!token.IsCancellationRequested)
+            {
+                await Task.Delay(HeartbeatInterval, token).ConfigureAwait(false);
+
+                var silentMs = Environment.TickCount64 - Volatile.Read(ref _lastReceivedAtMs);
+                if (_peerSendsHeartbeat && silentMs > HeartbeatTimeout.TotalMilliseconds)
+                {
+                    StatusChanged?.Invoke(this, $"超過 {(int)HeartbeatTimeout.TotalSeconds} 秒沒有收到對方的回應,判定連線已中斷。");
+                    // 關掉 socket 讓卡在讀取的監控迴圈丟出例外,走一般的「對方斷線」流程(清理傳輸、通知 UI)。
+                    client.Close();
+                    return;
+                }
+
+                // 不 await:對方已經不在的話,送出可能卡在寫入(傳送緩衝區滿了),不能因此擋住上面的逾時判斷。
+                if (Interlocked.Exchange(ref _heartbeatWriteInFlight, 1) == 0)
+                {
+                    _ = SendHeartbeatAsync(token);
+                }
+            }
+        }
+        catch (OperationCanceledException)
+        {
+            // 連線結束(本機斷線或監控迴圈結束),不用再送心跳。
+        }
+    }
+
+    private async Task SendHeartbeatAsync(CancellationToken token)
+    {
+        try
+        {
+            await WriteControlAsync(new FileControlMessage { Type = HeartbeatMessageType }, token).ConfigureAwait(false);
+        }
+        catch
+        {
+            // 寫入失敗代表連線已經有問題,交給監控迴圈/逾時判斷處理。
+        }
+        finally
+        {
+            Volatile.Write(ref _heartbeatWriteInFlight, 0);
+        }
+    }
+
+    private const string HeartbeatMessageType = "ping";
 
     private async Task MonitorConnectionAsync(TcpClient client, CancellationToken token)
     {
@@ -354,6 +443,8 @@ public sealed class ConnectionService : IDisposable
                     remoteClosed = true;
                     break;
                 }
+
+                Volatile.Write(ref _lastReceivedAtMs, Environment.TickCount64);
 
                 var (type, payload) = frame.Value;
                 if (type == FrameType.Control)
@@ -863,6 +954,13 @@ public sealed class ConnectionService : IDisposable
         }
         catch (JsonException)
         {
+            return;
+        }
+
+        if (message?.Type == HeartbeatMessageType)
+        {
+            // 心跳本身不需要回應,收到代表對方支援心跳,之後才啟用逾時判斷。
+            _peerSendsHeartbeat = true;
             return;
         }
 

@@ -18,6 +18,11 @@
         TextElement.FontWeight="Regular"
         TextElement.FontSize="13"
         FontFamily="{StaticResource Brand.Font}">
+    <Window.TaskbarItemInfo>
+        <!-- 傳輸檔案時在工作列按鈕上顯示進度(視窗縮小時也看得到)。 -->
+        <TaskbarItemInfo x:Name="TaskbarInfo"/>
+    </Window.TaskbarItemInfo>
+
     <Window.Resources>
         <conv:StringEqualsMultiConverter x:Key="StringEqualsMulti"/>
         <conv:IsNotNullConverter x:Key="IsNotNull"/>
@@ -346,17 +351,21 @@
                                         <ColumnDefinition Width="Auto"/>
                                         <ColumnDefinition Width="*"/>
                                         <ColumnDefinition Width="Auto"/>
+                                        <ColumnDefinition Width="Auto"/>
                                     </Grid.ColumnDefinitions>
                                     <materialDesign:PackIcon x:Name="FileTransferIcon" Kind="SwapVertical" Width="20" Height="20"
                                                               Foreground="{DynamicResource Brand.Brush.Primary}" VerticalAlignment="Center"/>
                                     <TextBlock x:Name="FileTransferNameText" Grid.Column="1" Margin="10,0"
                                                FontWeight="SemiBold" TextTrimming="CharacterEllipsis" VerticalAlignment="Center"/>
+                                    <TextBlock x:Name="FileTransferPercentText" Grid.Column="2" Margin="0,0,6,0"
+                                               FontSize="16" FontWeight="SemiBold" VerticalAlignment="Center"
+                                               Foreground="{DynamicResource Brand.Brush.Primary}"/>
                                     <Button x:Name="CancelFileTransferButton" AutomationProperties.AutomationId="CancelFileTransferButton"
-                                            Grid.Column="2" Style="{StaticResource Brand.Button.Icon}" Width="30" Height="30"
+                                            Grid.Column="3" Style="{StaticResource Brand.Button.Icon}" Width="30" Height="30"
                                             ToolTip="取消傳輸" Click="CancelFileTransferButton_Click">
                                         <materialDesign:PackIcon Kind="Close" Width="16" Height="16"/>
                                     </Button>
-                                    <Button x:Name="DismissFileTransferButton" Grid.Column="2" Style="{StaticResource Brand.Button.Icon}"
+                                    <Button x:Name="DismissFileTransferButton" Grid.Column="3" Style="{StaticResource Brand.Button.Icon}"
                                             Width="30" Height="30" ToolTip="關閉" Visibility="Collapsed" Click="DismissFileTransferButton_Click">
                                         <materialDesign:PackIcon Kind="Close" Width="16" Height="16"/>
                                     </Button>
@@ -864,7 +873,7 @@
                             <CheckBox x:Name="RemoteControlShuffleCheckBox" Content="隨機播放"
                                       VerticalAlignment="Center" Click="RemoteControlShuffleCheckBox_Click"/>
                             <CheckBox x:Name="RemoteControlAutoplayCheckBox" Content="自動播放下一部" Margin="20,0,0,0"
-                                      VerticalAlignment="Center" Click="RemoteControlAutoplayCheckBox_Click"/>
+                                      VerticalAlignment="Center"/>
                         </StackPanel>
                         <ScrollViewer Grid.Row="2" VerticalScrollBarVisibility="Auto">
                             <ItemsControl x:Name="RemoteControlVideoListItemsControl">
@@ -990,18 +999,6 @@
                                     </StackPanel>
                                 </Grid>
 
-                                <Border x:Name="RemoteControlAutoplayPanel" Margin="0,14,0,0" Padding="12,8" CornerRadius="12"
-                                        Background="{DynamicResource Brand.Brush.AccentSoft}" Visibility="Collapsed">
-                                    <Grid>
-                                        <Grid.ColumnDefinitions>
-                                            <ColumnDefinition Width="*"/>
-                                            <ColumnDefinition Width="Auto"/>
-                                        </Grid.ColumnDefinitions>
-                                        <TextBlock x:Name="RemoteControlAutoplayText" VerticalAlignment="Center" TextWrapping="Wrap"/>
-                                        <Button Grid.Column="1" Style="{StaticResource Brand.Button.Text}" Content="取消" Margin="8,0,0,0"
-                                                Click="RemoteControlCancelAutoplayButton_Click"/>
-                                    </Grid>
-                                </Border>
 
                                 <Rectangle Height="1" Fill="{DynamicResource Brand.Brush.Outline}" Margin="0,18"/>
 
@@ -1257,19 +1254,8 @@
                                               Checked="VideoShuffleCheckBox_Changed" Unchecked="VideoShuffleCheckBox_Changed"/>
                             </Grid>
 
-                            <TextBlock Text="自動播放前的倒數秒數" Style="{StaticResource Brand.Text.Overline}" Margin="0,0,0,4"/>
-                            <TextBox x:Name="VideoAutoplayCountdownTextBox" AutomationProperties.AutomationId="VideoAutoplayCountdownTextBox"
-                                     materialDesign:HintAssist.Hint="1–30 秒"
-                                     Style="{StaticResource MaterialDesignOutlinedTextBox}" Padding="10,8"
-                                     Width="140" HorizontalAlignment="Left"
-                                     PreviewTextInput="VideoAutoplayCountdownTextBox_PreviewTextInput"
-                                     TextChanged="VideoAutoplayCountdownTextBox_TextChanged"
-                                     KeyDown="VideoAutoplayCountdownTextBox_KeyDown"
-                                     LostFocus="VideoAutoplayCountdownTextBox_LostFocus"/>
-                            <TextBlock x:Name="VideoAutoplayCountdownErrorText" Foreground="{StaticResource Brand.Brush.Error}" FontSize="12"
-                                       Margin="2,4,0,0" TextWrapping="Wrap" Visibility="Collapsed"/>
 
-                            <TextBlock Text="預設音量" Style="{StaticResource Brand.Text.Overline}" Margin="0,14,0,4"/>
+                            <TextBlock Text="預設音量" Style="{StaticResource Brand.Text.Overline}" Margin="0,0,0,4"/>
                             <Grid>
                                 <Grid.ColumnDefinitions>
                                     <ColumnDefinition Width="*"/>

@@ -5,6 +5,7 @@ public sealed class FileControlMessage
 {
     // "file-offer" | "file-accept" | "file-reject" | "file-cancel" | "file-complete" |
     // "folder-offer" | "folder-accept" | "folder-reject" | "folder-cancel" | "folder-complete"
+    // "ping"(連線心跳,沒有 TransferId;舊版收到會直接忽略)
     public required string Type { get; init; }
 
     public string? TransferId { get; init; }

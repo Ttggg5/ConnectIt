@@ -13,9 +13,6 @@ public sealed class VideoServerSettingsService
     public const bool DefaultShuffle = false;
     public const int DefaultVolumePercent = 100;
     public const double DefaultPlaybackSpeed = 1;
-    public const int DefaultAutoplayCountdownSeconds = 5;
-    public const int MinAutoplayCountdownSeconds = 1;
-    public const int MaxAutoplayCountdownSeconds = 30;
 
     // 跟 VideoStreamingService.SortOptions 的合法值保持一致——兩邊都要能各自獨立編譯/測試,
     // 所以沒有共用同一份定義,但語意上是同一組排序方式。
@@ -35,9 +32,6 @@ public sealed class VideoServerSettingsService
     public int DefaultVolume { get; private set; } = DefaultVolumePercent;
 
     public double DefaultSpeed { get; private set; } = DefaultPlaybackSpeed;
-
-    /// <summary>自動播放下一部前的倒數秒數(觀看頁右下角的「即將播放下一部…」提示)。</summary>
-    public int AutoplayCountdownSeconds { get; private set; } = DefaultAutoplayCountdownSeconds;
 
     /// <summary>使用者額外加入的副檔名(內建清單以外),已正規化成小寫、有前置 "."、不重複。</summary>
     public IReadOnlyList<string> ExtraExtensions { get; private set; } = [];
@@ -102,18 +96,6 @@ public sealed class VideoServerSettingsService
         return normalized;
     }
 
-    public int SetAutoplayCountdownSeconds(int seconds)
-    {
-        var clamped = Math.Clamp(seconds, MinAutoplayCountdownSeconds, MaxAutoplayCountdownSeconds);
-        if (clamped != AutoplayCountdownSeconds)
-        {
-            AutoplayCountdownSeconds = clamped;
-            Save();
-        }
-
-        return clamped;
-    }
-
     /// <summary>[rawText] 逗號/分號/空白分隔的副檔名清單(有沒有前置 "." 都可以),正規化成小寫、
     /// 有 "." 開頭、去重,並跳過已經內建支援的副檔名(見 <see cref="VideoLibraryScanner.VideoExtensions"/>)。</summary>
     public IReadOnlyList<string> SetExtraExtensions(string rawText)
@@ -162,8 +144,6 @@ public sealed class VideoServerSettingsService
                     Shuffle = data.Shuffle;
                     DefaultVolume = Math.Clamp(data.DefaultVolume, 0, 100);
                     DefaultSpeed = ValidPlaybackSpeeds.Contains(data.DefaultSpeed) ? data.DefaultSpeed : DefaultPlaybackSpeed;
-                    AutoplayCountdownSeconds = Math.Clamp(
-                        data.AutoplayCountdownSeconds, MinAutoplayCountdownSeconds, MaxAutoplayCountdownSeconds);
                     ExtraExtensions = ParseExtensions(string.Join(',', data.ExtraExtensions ?? []));
                 }
             }
@@ -185,7 +165,6 @@ public sealed class VideoServerSettingsService
                 Shuffle = Shuffle,
                 DefaultVolume = DefaultVolume,
                 DefaultSpeed = DefaultSpeed,
-                AutoplayCountdownSeconds = AutoplayCountdownSeconds,
                 ExtraExtensions = ExtraExtensions.ToList(),
             });
             File.WriteAllText(_settingsFilePath, json);
@@ -207,8 +186,6 @@ public sealed class VideoServerSettingsService
         public int DefaultVolume { get; set; } = DefaultVolumePercent;
 
         public double DefaultSpeed { get; set; } = DefaultPlaybackSpeed;
-
-        public int AutoplayCountdownSeconds { get; set; } = DefaultAutoplayCountdownSeconds;
 
         public List<string>? ExtraExtensions { get; set; }
     }

@@ -113,9 +113,16 @@ public partial class MainWindow
         _connection.CancelFileTransfer();
     }
 
+    // 計算目前的百分比、速度與預計剩餘時間(見 TransferRateTracker)。
+    private readonly TransferRateTracker _transferRate = new();
+
     private void ShowFileTransferPanel(string fileName, string status)
     {
         _lastReceivedRecord = null;
+        _transferRate.Reset();
+        FileTransferPercentText.Text = string.Empty;
+        TaskbarInfo.ProgressState = System.Windows.Shell.TaskbarItemProgressState.Indeterminate;
+        ((App)Application.Current).SetTrayStatus($"準備傳輸「{fileName}」");
         FileTransferNameText.Text = fileName;
         FileTransferIcon.Kind = PackIconKind.SwapVertical;
         FileTransferProgressBar.Value = 0;
@@ -131,6 +138,15 @@ public partial class MainWindow
     {
         _lastReceivedRecord = null;
         FileTransferCard.Visibility = Visibility.Collapsed;
+        ClearTransferProgressIndicators();
+    }
+
+    /// <summary>傳輸結束後收起工作列進度與系統匣提示。</summary>
+    private void ClearTransferProgressIndicators()
+    {
+        TaskbarInfo.ProgressState = System.Windows.Shell.TaskbarItemProgressState.None;
+        TaskbarInfo.ProgressValue = 0;
+        ((App)Application.Current).SetTrayStatus(null);
     }
 
     /// <summary>最近一次「接收成功」的紀錄;傳輸卡片在完成狀態時的「開啟」/「在資料夾中顯示」就是作用在它上面。</summary>
@@ -141,6 +157,8 @@ public partial class MainWindow
     private void CompleteTransfer(TransferRecord record)
     {
         _transferHistory.Insert(0, record);
+        ClearTransferProgressIndicators();
+        FileTransferPercentText.Text = string.Empty;
 
         if (!record.CanOpen)
         {
@@ -280,20 +298,24 @@ public partial class MainWindow
     {
         Dispatcher.BeginInvoke(() =>
         {
-            if (e.FolderTransferId != null && e.TotalEntries is { } totalEntries)
-            {
-                var folderBytesTransferred = e.FolderBytesTransferred ?? e.BytesTransferred;
-                var folderTotalBytes = e.FolderTotalBytes ?? e.TotalBytes;
-                var percent = folderTotalBytes > 0 ? (double)folderBytesTransferred / folderTotalBytes * 100 : 100;
-                FileTransferProgressBar.Value = percent;
-                FileTransferStatusText.Text =
-                    $"第 {e.EntryIndex}/{totalEntries} 個檔案:{e.FileName}({FormatBytes(folderBytesTransferred)} / {FormatBytes(folderTotalBytes)})";
-                return;
-            }
+            // 資料夾/多檔案傳輸以整批的累計位元組計算,百分比、速度、剩餘時間才是「整個傳輸」的。
+            var isFolder = e.FolderTransferId != null && e.TotalEntries is not null;
+            var transferred = isFolder ? e.FolderBytesTransferred ?? e.BytesTransferred : e.BytesTransferred;
+            var total = isFolder ? e.FolderTotalBytes ?? e.TotalBytes : e.TotalBytes;
+            var snapshot = _transferRate.Update(transferred, total);
+            var fraction = total > 0 ? snapshot.Fraction : 1;
 
-            var singlePercent = e.TotalBytes > 0 ? (double)e.BytesTransferred / e.TotalBytes * 100 : 100;
-            FileTransferProgressBar.Value = singlePercent;
-            FileTransferStatusText.Text = $"{FormatBytes(e.BytesTransferred)} / {FormatBytes(e.TotalBytes)}";
+            FileTransferProgressBar.Value = fraction * 100;
+            FileTransferPercentText.Text = $"{(int)Math.Floor(fraction * 100)}%";
+            var bytesText = $"{FormatBytes(transferred)} / {FormatBytes(total)}・{snapshot.RateText}";
+            FileTransferStatusText.Text = isFolder
+                ? $"第 {e.EntryIndex}/{e.TotalEntries} 個檔案:{e.FileName}\n{bytesText}"
+                : bytesText;
+
+            TaskbarInfo.ProgressState = System.Windows.Shell.TaskbarItemProgressState.Normal;
+            TaskbarInfo.ProgressValue = fraction;
+            var verb = e.Direction == FileTransferDirection.Receiving ? "接收中" : "傳送中";
+            ((App)Application.Current).SetTrayStatus($"{verb} {(int)Math.Floor(fraction * 100)}%・{FileTransferNameText.Text}");
         });
     }
 
@@ -324,6 +346,7 @@ public partial class MainWindow
 
             MainSnackbar.MessageQueue?.Enqueue(message);
             AppendLog(message);
+            NotifyTransferEnded(e.Reason, message);
         });
     }
 
@@ -366,7 +389,21 @@ public partial class MainWindow
 
             MainSnackbar.MessageQueue?.Enqueue(message);
             AppendLog(message);
+            NotifyTransferEnded(e.Reason, message);
         });
+    }
+
+    /// <summary>傳輸結束時跳出系統匣通知(視窗在背景/縮到系統匣時特別有用),可在設定頁關閉通知。
+    /// 使用者自己按取消的不另外通知。</summary>
+    private void NotifyTransferEnded(FileTransferEndReason reason, string message)
+    {
+        if (reason == FileTransferEndReason.Cancelled)
+        {
+            return;
+        }
+
+        var title = reason == FileTransferEndReason.Completed ? "傳輸完成" : "傳輸未完成";
+        ((App)Application.Current).ShowConnectionAlert(title, message);
     }
 
     private static string FormatBytes(long bytes)

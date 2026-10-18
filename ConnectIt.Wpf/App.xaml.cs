@@ -153,6 +153,19 @@ public partial class App : Application
         _notifyIcon?.ShowBalloonTip(3000, title, message, ToolTipIcon.Info);
     }
 
+    /// <summary>更新系統匣圖示的滑鼠提示文字(例如傳輸進度),傳 null 還原成預設的「ConnectIt」。
+    /// NotifyIcon.Text 最多 63 個字元,超過會丟例外,所以這裡先截斷。</summary>
+    public void SetTrayStatus(string? status)
+    {
+        if (_notifyIcon is null)
+        {
+            return;
+        }
+
+        var text = string.IsNullOrEmpty(status) ? "ConnectIt" : $"ConnectIt — {status}";
+        _notifyIcon.Text = text.Length > 63 ? text[..63] : text;
+    }
+
     public void RequestExit()
     {
         IsExiting = true;

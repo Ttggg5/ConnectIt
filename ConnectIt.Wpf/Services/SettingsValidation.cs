@@ -19,9 +19,6 @@ public static class SettingsValidation
     public static Result ValidateConnectTimeout(string? text) =>
         ValidateRange(text, ConnectionSettingsService.MinConnectTimeoutSeconds, ConnectionSettingsService.MaxConnectTimeoutSeconds, "秒");
 
-    public static Result ValidateAutoplayCountdown(string? text) =>
-        ValidateRange(text, VideoServerSettingsService.MinAutoplayCountdownSeconds, VideoServerSettingsService.MaxAutoplayCountdownSeconds, "秒");
-
     /// <summary>留空代表交由系統自動指派(回傳 0);否則必須是 1024-65535(避開需要系統管理員權限的特權連接埠)。</summary>
     public static Result ValidatePort(string? text)
     {

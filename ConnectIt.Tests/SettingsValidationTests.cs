@@ -58,14 +58,4 @@ public class SettingsValidationTests
     {
         Assert.Equal(expectedValid, SettingsValidation.ValidateConnectTimeout(text).IsValid);
     }
-
-    [Theory]
-    [InlineData("1", true)]
-    [InlineData("30", true)]
-    [InlineData("0", false)]
-    [InlineData("31", false)]
-    public void ValidateAutoplayCountdown_UsesServiceRange(string text, bool expectedValid)
-    {
-        Assert.Equal(expectedValid, SettingsValidation.ValidateAutoplayCountdown(text).IsValid);
-    }
 }
