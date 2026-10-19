@@ -89,6 +89,7 @@ public partial class MainWindow
         // 排序/隨機播放/自動播放的初始值沿用設定頁的影片伺服器預設值,之後在遙控面板上的調整
         // 只影響這一次分享,不會寫回設定。
         _remoteShuffleSeed = Random.Shared.Next();
+        _remoteShuffleFirst = null;
         SelectComboBoxItemByTag(RemoteControlSortComboBox, options.DefaultSort);
         RemoteControlShuffleCheckBox.IsChecked = options.Shuffle;
         RemoteControlAutoplayCheckBox.IsChecked = options.AutoplayNext;

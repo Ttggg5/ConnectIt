@@ -30,6 +30,9 @@ public partial class MainWindow
     // 順序要固定,只有重新勾選「隨機播放」或重新開始分享時才換一組。
     private int _remoteShuffleSeed;
 
+    // 這一輪隨機播放的起點(相對路徑):固定排第一、只洗其餘的(見 VideoStreamingService.GetDisplayOrder 的 first)。
+    private string? _remoteShuffleFirst;
+
     // 自動播放下一部:主機端不一定真的在播放影片,所以「播完了」是用碼表外插的位置跟探測到的總長度
     // 比較出來的(見 HandleRemoteAutoplay),不是播放器的 ended 事件;判斷播完後直接切到下一部。
 
@@ -89,6 +92,14 @@ public partial class MainWindow
             return;
         }
 
+        // 隨機播放中手動點選影片:以點的這部為新起點重排,剩下的全部都還輪得到
+        // (上一部/下一部、自動播放下一部則照現有順序走)。
+        if (RemoteControlShuffleCheckBox.IsChecked == true)
+        {
+            _remoteShuffleFirst = entry.RelativePath;
+            RefreshRemoteControlPlaylist();
+        }
+
         SelectRemoteVideo(entry.RelativePath);
     }
 
@@ -107,8 +118,9 @@ public partial class MainWindow
         var sort = RemoteControlSortComboBox.SelectedItem is ComboBoxItem { Tag: string tag }
             ? tag
             : VideoServerSettingsService.DefaultSortValue;
+        var first = _remoteShuffleFirst is { } path ? manifest.ToList().FindIndex(m => m.RelativePath == path) : -1;
         return _videoStreaming
-            .GetDisplayOrder(sort, RemoteControlShuffleCheckBox.IsChecked == true, _remoteShuffleSeed)
+            .GetDisplayOrder(sort, RemoteControlShuffleCheckBox.IsChecked == true, _remoteShuffleSeed, first >= 0 ? first : null)
             .Select(i => manifest[i])
             .ToList();
     }
@@ -151,10 +163,12 @@ public partial class MainWindow
 
     private void RemoteControlShuffleCheckBox_Click(object sender, RoutedEventArgs e)
     {
-        // 每次重新勾選都換一組種子,不然關掉再打開會得到跟上次一模一樣的「隨機」順序。
+        // 每次重新勾選都換一組種子,不然關掉再打開會得到跟上次一模一樣的「隨機」順序;起點設成目前
+        // 正在播的那部,讓它排第一、其餘接在後面,不會被洗到清單中間或最後。
         if (RemoteControlShuffleCheckBox.IsChecked == true)
         {
             _remoteShuffleSeed = Random.Shared.Next();
+            _remoteShuffleFirst = _videoStreaming.ControlState.Snapshot().VideoRelativePath;
         }
 
         RefreshRemoteControlPlaylist();

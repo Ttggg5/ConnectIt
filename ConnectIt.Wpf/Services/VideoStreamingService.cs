@@ -306,6 +306,7 @@ public sealed class VideoStreamingService : IDisposable
             var watchFolder = watchFlat ? string.Empty : NormalizeFolder(GetQueryParam(request.Path, "folder"));
             var watchShuffle = ParseShuffle(request.Path);
             var watchSeed = ParseSeed(request.Path);
+            var watchFirst = ParseFirst(request.Path);
 
             if (controlSnapshot.Enabled)
             {
@@ -325,7 +326,7 @@ public sealed class VideoStreamingService : IDisposable
 
                 await WriteHtmlAsync(
                     stream,
-                    BuildWatchPageHtml(activeIndex, ParseSortOption(request.Path), watchFolder, watchFlat, watchShuffle, watchSeed),
+                    BuildWatchPageHtml(activeIndex, ParseSortOption(request.Path), watchFolder, watchFlat, watchShuffle, watchSeed, watchFirst),
                     token).ConfigureAwait(false);
                 return;
             }
@@ -339,7 +340,7 @@ public sealed class VideoStreamingService : IDisposable
 
             var sort = ParseSortOption(request.Path);
             await WriteHtmlAsync(
-                stream, BuildWatchPageHtml(i, sort, watchFolder, watchFlat, watchShuffle, watchSeed), token).ConfigureAwait(false);
+                stream, BuildWatchPageHtml(i, sort, watchFolder, watchFlat, watchShuffle, watchSeed, watchFirst), token).ConfigureAwait(false);
             return;
         }
 
@@ -457,12 +458,17 @@ public sealed class VideoStreamingService : IDisposable
     private static int ParseSeed(string rawPathWithQuery) =>
         int.TryParse(GetQueryParam(rawPathWithQuery, "seed"), out var seed) ? seed : 0;
 
+    private static int? ParseFirst(string rawPathWithQuery) =>
+        int.TryParse(GetQueryParam(rawPathWithQuery, "first"), out var first) ? first : null;
+
     /// <summary>依排序方式,回傳 manifest 項目「顯示順序」的索引清單(內容還是指向 <see cref="Manifest"/>
     /// 裡的原始索引,只是走訪順序不同)。首頁清單、觀看頁側邊清單、上一部/下一部都共用同一份排序邏輯。
     /// <paramref name="shuffle"/> 為真時,在排序結果之上用 <paramref name="seed"/> 洗牌一次——同一組
     /// seed 每次重算結果都一樣,讓「隨機播放」這一輪瀏覽過程中上一部/下一部順序穩定、不會每次請求
-    /// 都重新洗一次牌。主機端遙控面板(MainWindow.RemoteControl.cs)也共用這裡決定清單/上一部/下一部順序。</summary>
-    internal List<int> GetDisplayOrder(string sort, bool shuffle = false, int seed = 0)
+    /// 都重新洗一次牌。主機端遙控面板(MainWindow.RemoteControl.cs)也共用這裡決定清單/上一部/下一部順序。
+    /// <paramref name="first"/> 是隨機播放的起點:固定排第一,只洗其餘的——不然起點那部會被洗到隨機位置,
+    /// 洗到最後面就播完即停、「下一部」不能按,洗到中間則前面那些永遠輪不到。</summary>
+    internal List<int> GetDisplayOrder(string sort, bool shuffle = false, int seed = 0, int? first = null)
     {
         var indices = Enumerable.Range(0, Manifest.Count);
         var ordered = sort switch
@@ -480,11 +486,22 @@ public sealed class VideoStreamingService : IDisposable
             return ordered;
         }
 
+        var anchor = first is { } f && f >= 0 && f < Manifest.Count ? f : (int?)null;
+        if (anchor is { } a)
+        {
+            ordered.Remove(a);
+        }
+
         var random = new Random(seed);
         for (var i = ordered.Count - 1; i > 0; i--)
         {
             var j = random.Next(i + 1);
             (ordered[i], ordered[j]) = (ordered[j], ordered[i]);
+        }
+
+        if (anchor is { } start)
+        {
+            ordered.Insert(0, start);
         }
 
         return ordered;
@@ -765,7 +782,7 @@ public sealed class VideoStreamingService : IDisposable
         var sortJson = JsonSerializer.Serialize(sort);
         var extraQueryJson = JsonSerializer.Serialize(extraQuery);
         return $$"""
-            <a class="flatten-toggle" href="#" onclick='var indices={{indicesJson}};var pick=indices[Math.floor(Math.random()*indices.length)];var seed=Math.floor(Math.random()*2147483647);location.href="/watch?v="+pick+"&sort="+{{sortJson}}+"&shuffle=1&seed="+seed+{{extraQueryJson}};return false;'>隨機播放</a>
+            <a class="flatten-toggle" href="#" onclick='var indices={{indicesJson}};var pick=indices[Math.floor(Math.random()*indices.length)];var seed=Math.floor(Math.random()*2147483647);location.href="/watch?v="+pick+"&sort="+{{sortJson}}+"&shuffle=1&first="+pick+"&seed="+seed+{{extraQueryJson}};return false;'>隨機播放</a>
             """;
     }
 
@@ -831,11 +848,17 @@ public sealed class VideoStreamingService : IDisposable
 
     /// <summary>接在 "&sort={sort}" 後面的額外查詢字串——flat=true 帶 "&flat=1",folder 模式底下
     /// 非根目錄則帶 "&folder=...",shuffle 開啟則另外帶 "&shuffle=1&seed=...",讓 watch 頁的
-    /// 返回/上一部/下一部/側欄連結都能保留目前瀏覽的情境(含是否處於隨機播放狀態)。</summary>
-    private static string BuildExtraQuery(string folder, bool flat, bool shuffle, int seed)
+    /// 返回/上一部/下一部/側欄連結都能保留目前瀏覽的情境(含是否處於隨機播放狀態;<paramref name="first"/>
+    /// 是這一輪隨機播放的起點,見 <see cref="GetDisplayOrder"/>)。</summary>
+    private static string BuildExtraQuery(string folder, bool flat, bool shuffle, int seed, int? first = null)
     {
         var query = flat ? "&flat=1" : (folder.Length == 0 ? string.Empty : $"&folder={Uri.EscapeDataString(folder)}");
-        return shuffle ? $"{query}&shuffle=1&seed={seed}" : query;
+        if (!shuffle)
+        {
+            return query;
+        }
+
+        return first is { } f ? $"{query}&shuffle=1&first={f}&seed={seed}" : $"{query}&shuffle=1&seed={seed}";
     }
 
     private static string BuildHomeSortPrefix(string folder, bool flat)
@@ -871,35 +894,42 @@ public sealed class VideoStreamingService : IDisposable
         return $"""<nav class="breadcrumb">{string.Join(" / ", parts)}</nav>""";
     }
 
-    private string BuildWatchPageHtml(int index, string sort, string folder, bool flat, bool shuffle, int seed)
+    private string BuildWatchPageHtml(int index, string sort, string folder, bool flat, bool shuffle, int seed, int? first)
     {
         var entry = Manifest[index];
+        // 網址沒帶起點(例如分享設定預設就開隨機播放、直接點首頁的影片卡片)時,以目前這部當起點。
+        var anchor = shuffle ? first ?? index : (int?)null;
 
         // 觀看頁的上一部/下一部、右側清單預設只在「目前這個資料夾」裡走(跟首頁逐層瀏覽一致),
         // 只有攤平模式才會照全域排序橫跨所有資料夾——不然使用者會在不知情的狀況下被帶去別的
         // 資料夾。folder 模式下用的還是全域排序,只是先篩選成這個資料夾直屬的影片而已。shuffle
         // 開啟時,GetDisplayOrder 回傳的就已經是洗牌過的順序,不用再另外處理。
         var order = flat
-            ? GetDisplayOrder(sort, shuffle, seed)
-            : GetDisplayOrder(sort, shuffle, seed).Where(GetFolderContents(folder).VideoIndices.ToHashSet().Contains).ToList();
+            ? GetDisplayOrder(sort, shuffle, seed, anchor)
+            : GetDisplayOrder(sort, shuffle, seed, anchor).Where(GetFolderContents(folder).VideoIndices.ToHashSet().Contains).ToList();
         var position = order.IndexOf(index);
         var hasPrev = position > 0;
         var hasNext = position >= 0 && position < order.Count - 1;
         var prevIndex = hasPrev ? order[position - 1] : (int?)null;
         var nextIndex = hasNext ? order[position + 1] : (int?)null;
-        var extraQuery = BuildExtraQuery(folder, flat, shuffle, seed);
+        var extraQuery = BuildExtraQuery(folder, flat, shuffle, seed, anchor);
 
         // 隨機播放 checkbox 用:關閉時導到的網址(不帶 shuffle/seed),開啟時導到的網址前綴
         // (JS 在使用者勾選當下才補上新產生的 seed,每次打開都重新洗一次牌)。
         var baseExtraQuery = BuildExtraQuery(folder, flat, shuffle: false, seed: 0);
         var shuffleOffHref = $"/watch?v={index}&sort={sort}{baseExtraQuery}";
-        var shuffleOnHrefPrefix = $"/watch?v={index}&sort={sort}{baseExtraQuery}&shuffle=1&seed=";
+        var shuffleOnHrefPrefix = $"/watch?v={index}&sort={sort}{baseExtraQuery}&shuffle=1&first={index}&seed=";
+
+        // 隨機播放中從側欄挑片:以挑的這部為新起點重排,剩下的全部都還輪得到(而不是沿用原本的順序,
+        // 挑到中間那部就會讓排在它前面、還沒播過的永遠輪不到)。
+        string SidebarHref(int i) =>
+            $"/watch?v={i}&sort={sort}" + (shuffle ? BuildExtraQuery(folder, flat, shuffle: true, seed, i) : extraQuery);
 
         var sidebar = order.Count > 1
             ? $"""
                 <aside class="sidebar">
                   {BuildSortSelectHtml(sort, $"/watch?v={index}&sort=", extraQuery)}
-                  {BuildSidebarItems(order, index, sort, extraQuery)}
+                  {BuildSidebarItems(order, index, SidebarHref)}
                 </aside>
                 """
             : string.Empty;
@@ -978,7 +1008,7 @@ public sealed class VideoStreamingService : IDisposable
 
     /// <summary>右側影片清單:依目前選的排序方式列出全部影片(含目前播放中的那一部),每筆都附縮圖,
     /// 目前播放中的那筆用樣式標示、不能再點(不用整個重新導向到自己)。</summary>
-    private string BuildSidebarItems(IReadOnlyList<int> order, int currentIndex, string sort, string extraQuery) => string.Join('\n', order.Select(i =>
+    private string BuildSidebarItems(IReadOnlyList<int> order, int currentIndex, Func<int, string> hrefFor) => string.Join('\n', order.Select(i =>
     {
         var entry = Manifest[i];
         var isCurrent = i == currentIndex;
@@ -998,7 +1028,7 @@ public sealed class VideoStreamingService : IDisposable
 
         return isCurrent
             ? $"""<div class="side-item current">{thumb}{info}</div>"""
-            : $"""<a class="side-item" href="/watch?v={i}&sort={sort}{extraQuery}">{thumb}{info}</a>""";
+            : $"""<a class="side-item" href="{hrefFor(i)}">{thumb}{info}</a>""";
     }));
 
     private static string BuildWatchPageScript(
