@@ -342,8 +342,75 @@
                             </StackPanel>
                         </Grid>
 
+                        <StackPanel Grid.Row="2">
+                        <!-- 螢幕鏡像:觀看對方螢幕 / 分享我的螢幕;分享中、觀看中顯示狀態與停止 -->
+                        <Border x:Name="ScreenMirrorCard" AutomationProperties.AutomationId="ScreenMirrorCard"
+                                Margin="20,14,20,0" Padding="14" CornerRadius="16" Background="{DynamicResource Brand.Brush.SurfaceVariant}">
+                            <StackPanel>
+                                <StackPanel Orientation="Horizontal">
+                                    <materialDesign:PackIcon Kind="MonitorShare" Width="18" Height="18" VerticalAlignment="Center"
+                                                              Foreground="{DynamicResource Brand.Brush.Primary}"/>
+                                    <TextBlock Text="螢幕鏡像" FontWeight="SemiBold" Margin="8,0,0,0" VerticalAlignment="Center"/>
+                                </StackPanel>
+
+                                <UniformGrid x:Name="ScreenMirrorIdlePanel" Columns="2" Margin="0,10,0,0">
+                                    <Button x:Name="ViewPeerScreenButton" AutomationProperties.AutomationId="ViewPeerScreenButton"
+                                            Style="{StaticResource Brand.Button.Ghost}" Margin="0,0,5,0" Padding="8,8"
+                                            Background="{DynamicResource Brand.Brush.Surface}"
+                                            ToolTip="請對方分享他的螢幕給你看" Click="ViewPeerScreenButton_Click">
+                                        <StackPanel Orientation="Horizontal">
+                                            <materialDesign:PackIcon Kind="CastConnected" Margin="0,0,6,0" VerticalAlignment="Center"/>
+                                            <TextBlock Text="觀看對方螢幕" VerticalAlignment="Center"/>
+                                        </StackPanel>
+                                    </Button>
+                                    <Button x:Name="ShareMyScreenButton" AutomationProperties.AutomationId="ShareMyScreenButton"
+                                            Style="{StaticResource Brand.Button.Ghost}" Margin="5,0,0,0" Padding="8,8"
+                                            Background="{DynamicResource Brand.Brush.Surface}"
+                                            ToolTip="把這台電腦的主螢幕分享給對方" Click="ShareMyScreenButton_Click">
+                                        <StackPanel Orientation="Horizontal">
+                                            <materialDesign:PackIcon Kind="MonitorShare" Margin="0,0,6,0" VerticalAlignment="Center"/>
+                                            <TextBlock Text="分享我的螢幕" VerticalAlignment="Center"/>
+                                        </StackPanel>
+                                    </Button>
+                                </UniformGrid>
+
+                                <StackPanel x:Name="ScreenMirrorSharingPanel" Margin="0,10,0,0" Visibility="Collapsed">
+                                    <StackPanel Orientation="Horizontal">
+                                        <Ellipse Style="{StaticResource Brand.BreathingDot}" Fill="#EF4444" VerticalAlignment="Center"/>
+                                        <TextBlock Text="正在分享你的螢幕" Margin="8,0,0,0" VerticalAlignment="Center"/>
+                                    </StackPanel>
+                                    <CheckBox x:Name="AllowRemoteControlCheckBox" AutomationProperties.AutomationId="AllowRemoteControlCheckBox"
+                                              Content="允許對方操控這台電腦(滑鼠與鍵盤)" Margin="0,10,0,0"
+                                              Checked="AllowRemoteControlCheckBox_Changed" Unchecked="AllowRemoteControlCheckBox_Changed"/>
+                                    <Button AutomationProperties.AutomationId="StopScreenShareButton" Style="{StaticResource Brand.Button.Danger}"
+                                            Margin="0,10,0,0" HorizontalAlignment="Stretch" Click="StopScreenMirrorButton_Click">
+                                        <StackPanel Orientation="Horizontal">
+                                            <materialDesign:PackIcon Kind="MonitorOff" Margin="0,0,8,0" VerticalAlignment="Center"/>
+                                            <TextBlock Text="停止分享" VerticalAlignment="Center"/>
+                                        </StackPanel>
+                                    </Button>
+                                </StackPanel>
+
+                                <StackPanel x:Name="ScreenMirrorViewingPanel" Margin="0,10,0,0" Visibility="Collapsed">
+                                    <TextBlock Text="正在觀看對方的螢幕(在另一個視窗)" Style="{StaticResource Brand.Text.Caption}"/>
+                                    <UniformGrid Columns="2" Margin="0,10,0,0">
+                                        <Button Style="{StaticResource Brand.Button.Ghost}" Margin="0,0,5,0" Padding="8,8"
+                                                Background="{DynamicResource Brand.Brush.Surface}" Click="ShowScreenViewerButton_Click">
+                                            <StackPanel Orientation="Horizontal">
+                                                <materialDesign:PackIcon Kind="OpenInNew" Margin="0,0,6,0" VerticalAlignment="Center"/>
+                                                <TextBlock Text="顯示視窗" VerticalAlignment="Center"/>
+                                            </StackPanel>
+                                        </Button>
+                                        <Button Style="{StaticResource Brand.Button.Danger}" Margin="5,0,0,0" Click="StopScreenMirrorButton_Click">
+                                            <TextBlock Text="停止觀看"/>
+                                        </Button>
+                                    </UniformGrid>
+                                </StackPanel>
+                            </StackPanel>
+                        </Border>
+
                         <!-- 傳輸中 / 完成 -->
-                        <Border x:Name="FileTransferCard" Grid.Row="2" Margin="20,14,20,0" Padding="14"
+                        <Border x:Name="FileTransferCard" Margin="20,14,20,0" Padding="14"
                                 CornerRadius="16" Background="{DynamicResource Brand.Brush.SurfaceVariant}" Visibility="Collapsed">
                             <StackPanel>
                                 <Grid>
@@ -391,6 +458,7 @@
                                 </StackPanel>
                             </StackPanel>
                         </Border>
+                        </StackPanel>
 
                         <!-- 傳輸紀錄 -->
                         <StackPanel Grid.Row="3" Orientation="Horizontal" Margin="20,18,20,8">

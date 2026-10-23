@@ -541,6 +541,7 @@ public partial class MainWindow
     /// 用目前的名稱重新廣播,並重新快速搜尋一輪。</summary>
     private void OnConnectionEnded(string logMessage)
     {
+        OnScreenMirrorConnectionEnded();
         _connectedAddress = null;
         DevicesItemsControl.Tag = null;
         HideFileTransferPanel();

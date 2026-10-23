@@ -19,6 +19,14 @@
 - **異常斷線偵測**:連線期間雙方每 4 秒互送心跳,對方沒有正常關閉連線就消失(程式當掉、斷網、直接關機)時,約 15 秒內就會判定斷線並通知。
 - **系統匣圖示**:關閉視窗會隱藏到系統匣而不是結束程式,裝置探索與連線功能持續在背景運作;可從系統匣選單重新開啟視窗或結束程式。
 
+### 螢幕鏡像與遠端操控
+
+- **雙向**:已連線時,「目前連線」面板可以「觀看對方螢幕」(請對方分享)或「分享我的螢幕」(邀請對方觀看),兩邊都要對方按下同意/接受才會開始;Android 端也能分享或觀看。
+- **獨立的觀看視窗**:對方的畫面顯示在另一個可自由縮放的視窗,F11 全螢幕,工具列顯示是否可以操控與即時更新率。
+- **遠端操控(需分享端同意)**:分享端在同意/分享時勾選「允許對方操控」(預設不勾、分享中隨時可以取消),觀看端在畫面上的滑鼠點擊/拖曳/滾輪與鍵盤輸入(含 Ctrl/Alt 組合鍵、中文輸入法打的字)會轉送給對方。對方是 Android 時,點擊/拖曳 = 觸控手勢、右鍵 = 返回,工具列另有主畫面/最近使用。
+- **只分享主螢幕**:包含滑鼠游標;用 DXGI Desktop Duplication 擷取(2560×1440 一張連壓縮約 11ms,最高 60fps),遠端桌面工作階段等不支援的環境自動改用 GDI。畫面沒有變化時不送出,靜止的桌面幾乎不佔頻寬。解析度高於 1920 時等比例縮小。
+- **限制**:Windows 不允許一般權限的程式操作以系統管理員身分執行的視窗(例如工作管理員、UAC 提示),這些視窗在遠端看得到但無法操控;UAC 安全桌面/鎖定畫面期間畫面會停住。
+
 ### 影片伺服器
 
 - **觀看 / 分享兩個分頁**:「影片」頁分成「觀看」(區網內的影片伺服器、繼續觀看上次看到一半的影片)與「分享」兩個分頁。
@@ -48,6 +56,9 @@
 | `ConnectIt.Wpf` | 主要的 WPF 應用程式 |
 | `ConnectIt.Wpf/Services/MdnsDiscoveryService.cs` | 負責 mDNS 裝置廣播與探索;可指定不同的服務類型,裝置配對與影片伺服器各自用一個獨立的實例 |
 | `ConnectIt.Wpf/Services/ConnectionService.cs` | 負責 TCP 連線交握(請求/接受/拒絕)、斷線偵測,以及連線建立後的檔案/資料夾傳輸訊框協定 |
+| `ConnectIt.Wpf/Services/ScreenMirrorController.cs` | 螢幕鏡像的狀態機(請求/邀請/接受/拒絕/停止、流量控制、畫面解碼),跑在配對連線上 |
+| `ConnectIt.Wpf/Services/ScreenCaptureService.cs`、`DesktopDuplicationSource.cs`、`ScreenInputInjector.cs` | 分享端:DXGI Desktop Duplication(失敗時 GDI)擷取主螢幕、縮放、畫游標、壓成 JPEG;用 SendInput 注入遠端的滑鼠/鍵盤操作 |
+| `ConnectIt.Wpf/ScreenViewerWindow.xaml` | 觀看端的獨立視窗,轉送滑鼠/鍵盤操作 |
 | `ConnectIt.Wpf/Services/ThemeService.cs` | 負責套用與儲存淺色/深色/跟隨系統的顏色主題 |
 | `ConnectIt.Wpf/Services/FileTransferSettingsService.cs` | 負責儲存接收檔案要存放的資料夾設定 |
 | `ConnectIt.Wpf/Services/DiscoverySettingsService.cs` | 負責儲存自動搜尋裝置的秒數設定 |
@@ -90,6 +101,13 @@ dotnet test
 3. 被連線的一方跳出確認對話框,使用者按下「接受」或「拒絕」後回傳 `accept`/`reject` 訊息。
 4. 若接受,雙方各自進入已連線畫面,並開始監控連線狀態;任一方關閉連線都會通知另一方並返回裝置搜尋畫面。
 5. 連線建立後,同一個 TCP socket 改用一個簡單的長度前綴訊框協定傳輸資料(控制訊息或檔案內容區塊)。單一檔案走 `file-offer` → `file-accept`/`file-reject` → 分塊傳送 → `file-complete` 交握;資料夾/多檔案則是先送出 `folder-offer`,對方接受後底下每個檔案沿用同一套檔案交握自動依序傳送,任一方也可以隨時取消整個傳輸。
+
+### 螢幕鏡像
+
+1. 跟檔案傳輸共用同一條已配對的 TCP 連線,另外加兩種訊框型別:型別 2 = 螢幕鏡像控制訊息(UTF-8 JSON,見 `ScreenMessage.cs`),型別 3 = 一張畫面(`[4 bytes big-endian 序號][JPEG]`)。舊版收到不認得的型別會直接忽略,所以發起端另外有 60 秒逾時。
+2. 觀看端送 `screen-request`(或分享端送 `screen-offer`),對方同意後分享端開始擷取並送出 `screen-info`(畫面尺寸、平台、是否允許操控),之後持續送畫面。
+3. 流量控制:觀看端每解碼完一張就回 `screen-ack`,分享端最多只允許 4 張還沒被確認——網路變慢時直接跳過中間的畫面,而不是讓延遲越積越多。
+4. 允許操控時,觀看端送 `screen-input`(座標一律是 0~1 的相對位置,按鍵用網頁 `KeyboardEvent.key` 的命名),分享端用 SendInput(Windows)或無障礙服務的手勢(Android)重播。工作階段結束時所有按住的按鍵/滑鼠鍵一律放開。
 
 ### 影片伺服器
 

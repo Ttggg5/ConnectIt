@@ -35,7 +35,12 @@ public sealed class ConnectionService : IDisposable
     {
         public const byte Control = 0;
         public const byte Chunk = 1;
+        public const byte ScreenControl = 2;
+        public const byte ScreenFrame = 3;
     }
+
+    /// <summary>單一訊框的資料長度上限(扣掉 1 個型別 byte),螢幕畫面的 JPEG 也必須壓在這之內。</summary>
+    public const int MaxFramePayloadSize = MaxFrameSize - 1;
 
     private TcpListener? _listener;
     private CancellationTokenSource? _acceptCts;
@@ -96,6 +101,12 @@ public sealed class ConnectionService : IDisposable
 
     /// <summary>資料夾傳輸結束,不論成功、被拒絕、被取消或失敗。</summary>
     public event EventHandler<FolderTransferEndedEventArgs>? FolderTransferEnded;
+
+    /// <summary>收到螢幕鏡像控制訊息(見 <see cref="ScreenMessage"/>)。在讀取迴圈上觸發,處理時不能阻塞太久。</summary>
+    public event EventHandler<ScreenMessage>? ScreenMessageReceived;
+
+    /// <summary>收到一張螢幕畫面:[序號 4 bytes][JPEG]。在讀取迴圈上觸發,解碼請另外開工作。</summary>
+    public event EventHandler<byte[]>? ScreenFrameReceived;
 
     /// <summary>開始監聽,回傳實際使用的連接埠(0 代表由系統挑選)。</summary>
     public int StartListening(int preferredPort = 0)
@@ -455,6 +466,17 @@ public sealed class ConnectionService : IDisposable
                 {
                     HandleChunkFrame(payload);
                 }
+                else if (type == FrameType.ScreenControl)
+                {
+                    if (ScreenMessage.Parse(payload) is { } screenMessage)
+                    {
+                        ScreenMessageReceived?.Invoke(this, screenMessage);
+                    }
+                }
+                else if (type == FrameType.ScreenFrame)
+                {
+                    ScreenFrameReceived?.Invoke(this, payload);
+                }
             }
         }
         catch (OperationCanceledException)
@@ -546,6 +568,14 @@ public sealed class ConnectionService : IDisposable
 
     private Task WriteControlAsync(FileControlMessage message, CancellationToken token = default) =>
         WriteFrameAsync(FrameType.Control, JsonSerializer.SerializeToUtf8Bytes(message), token);
+
+    /// <summary>送出螢幕鏡像控制訊息,沒有連線時直接忽略。</summary>
+    public Task SendScreenMessageAsync(ScreenMessage message, CancellationToken token = default) =>
+        WriteFrameAsync(FrameType.ScreenControl, message.ToUtf8Json(), token);
+
+    /// <summary>送出一張螢幕畫面。<paramref name="payload"/> 前 4 bytes 必須已經填好 big-endian 的序號,後面接 JPEG。</summary>
+    public Task SendScreenFrameAsync(ReadOnlyMemory<byte> payload, CancellationToken token = default) =>
+        WriteFrameAsync(FrameType.ScreenFrame, payload, token);
 
     private static async Task<(byte Type, byte[] Payload)?> ReadFrameAsync(NetworkStream stream, CancellationToken token)
     {

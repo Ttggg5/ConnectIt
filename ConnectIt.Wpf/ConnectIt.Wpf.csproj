@@ -28,6 +28,8 @@
     <PackageReference Include="MaterialDesignThemes" Version="5.3.2" />
     <PackageReference Include="Microsoft.Web.WebView2" Version="1.0.3179.45" />
     <PackageReference Include="QRCoder" Version="1.6.0" />
+    <!-- 螢幕鏡像分享端用 DXGI Desktop Duplication 擷取畫面(比 GDI BitBlt 快好幾倍,見 DesktopDuplicationSource.cs)。 -->
+    <PackageReference Include="Vortice.Direct3D11" Version="3.8.3" />
   </ItemGroup>
 
 </Project>

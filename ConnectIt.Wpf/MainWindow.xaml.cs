@@ -12,7 +12,8 @@ namespace ConnectIt.Wpf;
 // 這個類別的程式碼依功能拆到多個 partial 檔案:MainWindow.Devices.cs(裝置探索與配對連線)、
 // MainWindow.FileTransfer.cs(檔案/資料夾傳輸與傳輸紀錄)、MainWindow.Settings.cs(設定頁)、
 // MainWindow.VideoServer.cs(影片伺服器主機端操作)、MainWindow.RemoteControl.cs(遙控面板)、
-// MainWindow.VideoViewer.cs(影片伺服器觀看端)、MainWindow.Onboarding.cs(首次啟動引導)。
+// MainWindow.VideoViewer.cs(影片伺服器觀看端)、MainWindow.Onboarding.cs(首次啟動引導)、
+// MainWindow.ScreenMirror.cs(螢幕鏡像:觀看/分享螢幕與遠端操控)。
 // 這個檔案只留下跨功能共用的欄位/建構子/視窗生命週期與導覽切換。
 public partial class MainWindow : Window
 {
@@ -68,6 +69,7 @@ public partial class MainWindow : Window
         _connection.FileTransferProgress += OnFileTransferProgress;
         _connection.FileTransferEnded += OnFileTransferEnded;
         _connection.FolderTransferEnded += OnFolderTransferEnded;
+        InitializeScreenMirror();
 
         VideoServersItemsControl.ItemsSource = _videoServers;
         _videoServers.CollectionChanged += (_, _) =>
