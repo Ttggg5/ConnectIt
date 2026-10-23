@@ -54,10 +54,10 @@ public partial class MainWindow
             return;
         }
 
-        var (confirmed, allowControl) = await ShowShareScreenDialogAsync();
+        var (confirmed, allowControl, shareAudio) = await ShowShareScreenDialogAsync();
         if (confirmed)
         {
-            ScreenMirror.StartShareOffer(allowControl);
+            ScreenMirror.StartShareOffer(allowControl, shareAudio);
         }
     }
 
@@ -86,6 +86,16 @@ public partial class MainWindow
         ScreenMirror.SetAllowControl(AllowRemoteControlCheckBox.IsChecked == true);
     }
 
+    private void ShareAudioCheckBox_Changed(object sender, RoutedEventArgs e)
+    {
+        if (_suppressAllowControlEvent)
+        {
+            return;
+        }
+
+        ScreenMirror.SetShareAudio(ShareAudioCheckBox.IsChecked == true);
+    }
+
     /// <summary>連線結束(不論哪一方)時呼叫。</summary>
     private void OnScreenMirrorConnectionEnded() => _screenMirror?.OnConnectionClosed();
 
@@ -105,6 +115,7 @@ public partial class MainWindow
         {
             _suppressAllowControlEvent = true;
             AllowRemoteControlCheckBox.IsChecked = status.AllowControl;
+            ShareAudioCheckBox.IsChecked = status.ShareAudio;
             _suppressAllowControlEvent = false;
         }
 
@@ -341,6 +352,15 @@ public partial class MainWindow
         Margin = new Thickness(0, 0, 0, 20),
     };
 
+    /// <summary>預設勾選:分享畫面時大多也想讓對方聽到聲音(例如一起看影片)。</summary>
+    private CheckBox BuildShareAudioCheckBox() => new()
+    {
+        Content = "同時分享這台電腦的聲音",
+        IsChecked = true,
+        HorizontalAlignment = HorizontalAlignment.Center,
+        Margin = new Thickness(0, 0, 0, 10),
+    };
+
     private (Button Left, Button Right) AddDialogButtons(StackPanel panel, string leftText, string rightText)
     {
         var grid = new Grid();
@@ -355,24 +375,26 @@ public partial class MainWindow
         return (left, right);
     }
 
-    private Task<(bool Confirmed, bool AllowControl)> ShowShareScreenDialogAsync()
+    private Task<(bool Confirmed, bool AllowControl, bool ShareAudio)> ShowShareScreenDialogAsync()
     {
         var panel = BuildScreenMirrorDialogHeader(PackIconKind.MonitorShare, "螢幕鏡像", "分享你的螢幕",
             "對方接受後會看到這台電腦的主螢幕(包含滑鼠游標)。");
+        var shareAudio = BuildShareAudioCheckBox();
+        panel.Children.Add(shareAudio);
         var allowControl = BuildAllowControlCheckBox();
         panel.Children.Add(allowControl);
         var (cancel, share) = AddDialogButtons(panel, "取消", "開始分享");
 
-        var tcs = new TaskCompletionSource<(bool, bool)>();
+        var tcs = new TaskCompletionSource<(bool, bool, bool)>();
         cancel.Click += (_, _) =>
         {
             DialogHost.Close(RootDialogIdentifier);
-            tcs.TrySetResult((false, false));
+            tcs.TrySetResult((false, false, false));
         };
         share.Click += (_, _) =>
         {
             DialogHost.Close(RootDialogIdentifier);
-            tcs.TrySetResult((true, allowControl.IsChecked == true));
+            tcs.TrySetResult((true, allowControl.IsChecked == true, shareAudio.IsChecked == true));
         };
 
         _ = DialogHost.Show(WrapInDialogCard(panel), RootDialogIdentifier);
@@ -384,6 +406,8 @@ public partial class MainWindow
     {
         var panel = BuildScreenMirrorDialogHeader(PackIconKind.MonitorShare, "螢幕鏡像", $"「{peerName}」想要觀看你的螢幕",
             "同意後對方會看到這台電腦的主螢幕(包含滑鼠游標)。");
+        var shareAudio = BuildShareAudioCheckBox();
+        panel.Children.Add(shareAudio);
         var allowControl = BuildAllowControlCheckBox();
         panel.Children.Add(allowControl);
         var (reject, accept) = AddDialogButtons(panel, "拒絕", "同意");
@@ -398,7 +422,7 @@ public partial class MainWindow
         accept.Click += (_, _) =>
         {
             CloseOwnScreenMirrorDialog();
-            ScreenMirror.RespondToIncomingRequest(true, allowControl.IsChecked == true);
+            ScreenMirror.RespondToIncomingRequest(true, allowControl.IsChecked == true, shareAudio.IsChecked == true);
         };
 
         ShowScreenMirrorDialog(status, WrapInDialogCard(panel));

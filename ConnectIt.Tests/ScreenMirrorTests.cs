@@ -140,7 +140,112 @@ public class ScreenMirrorTests : IDisposable
         Assert.Equal(1200, height);
     }
 
+    // ===================== 聲音格式轉換 =====================
+
+    [Fact]
+    public void ConvertToPcm16Stereo_ConvertsFloatStereo()
+    {
+        var format = NAudio.Wave.WaveFormat.CreateIeeeFloatWaveFormat(48000, 2);
+        var source = new byte[8];
+        BitConverter.GetBytes(0.5f).CopyTo(source, 0);
+        BitConverter.GetBytes(-1.0f).CopyTo(source, 4);
+        var destination = Array.Empty<byte>();
+
+        var length = ScreenAudioCapture.ConvertToPcm16Stereo(source, source.Length, format, ref destination);
+
+        Assert.Equal(4, length);
+        Assert.Equal(16383, BitConverter.ToInt16(destination, 0));
+        Assert.Equal(-32767, BitConverter.ToInt16(destination, 2));
+    }
+
+    [Fact]
+    public void ConvertToPcm16Stereo_KeepsFirstTwoChannelsOfSurround()
+    {
+        // 5.1 float:每個 frame 6 個聲道,只取前兩個(左前、右前)。
+        var format = NAudio.Wave.WaveFormat.CreateIeeeFloatWaveFormat(48000, 6);
+        var source = new byte[6 * 4 * 2];
+        for (var frame = 0; frame < 2; frame++)
+        {
+            for (var channel = 0; channel < 6; channel++)
+            {
+                BitConverter.GetBytes(channel == 0 ? 0.25f : channel == 1 ? -0.25f : 0.9f).CopyTo(source, (frame * 6 + channel) * 4);
+            }
+        }
+
+        var destination = Array.Empty<byte>();
+        var length = ScreenAudioCapture.ConvertToPcm16Stereo(source, source.Length, format, ref destination);
+
+        Assert.Equal(8, length);
+        Assert.Equal(8191, BitConverter.ToInt16(destination, 0));
+        Assert.Equal(-8191, BitConverter.ToInt16(destination, 2));
+        Assert.Equal(8191, BitConverter.ToInt16(destination, 4));
+    }
+
+    [Fact]
+    public void ConvertToPcm16Stereo_DuplicatesMonoPcm16()
+    {
+        var format = new NAudio.Wave.WaveFormat(44100, 16, 1);
+        var source = BitConverter.GetBytes((short)1234);
+        var destination = Array.Empty<byte>();
+
+        var length = ScreenAudioCapture.ConvertToPcm16Stereo(source, source.Length, format, ref destination);
+
+        Assert.Equal(4, length);
+        Assert.Equal(1234, BitConverter.ToInt16(destination, 0));
+        Assert.Equal(1234, BitConverter.ToInt16(destination, 2));
+    }
+
+    [Fact]
+    public void IsSilent_DetectsAllZeroBuffers()
+    {
+        Assert.True(ScreenAudioCapture.IsSilent(new byte[64]));
+        var loud = new byte[64];
+        loud[63] = 1;
+        Assert.False(ScreenAudioCapture.IsSilent(loud));
+    }
+
     // ===================== 狀態機(真正的 loopback 連線) =====================
+
+    [Fact]
+    public async Task SharingWithAudio_AnnouncesAudioFormatAndCanBeTurnedOff()
+    {
+        // 需要有音效輸出裝置(WASAPI loopback 才開得起來);沒有的環境就不驗證。
+        try
+        {
+            new ScreenAudioCapture().Dispose();
+        }
+        catch
+        {
+            return;
+        }
+
+        await ConnectAsync();
+        _initiatorMirror.RequestViewPeer();
+        Assert.True(await WaitUntilAsync(() => _acceptorMirror.Status.Phase == ScreenMirrorPhase.IncomingRequest, WaitTimeout));
+
+        _acceptorMirror.RespondToIncomingRequest(accept: true, allowControl: false, shareAudio: true);
+
+        Assert.True(_acceptorMirror.Status.ShareAudio);
+        Assert.True(await WaitUntilAsync(() => _initiatorMirror.Status.AudioSampleRate is > 0, WaitTimeout));
+
+        _acceptorMirror.SetShareAudio(false);
+        Assert.False(_acceptorMirror.Status.ShareAudio);
+        Assert.True(await WaitUntilAsync(() => _initiatorMirror.Status.AudioSampleRate is null, WaitTimeout));
+    }
+
+    [Fact]
+    public async Task SharingWithoutAudio_DoesNotAnnounceAudio()
+    {
+        await ConnectAsync();
+        _initiatorMirror.RequestViewPeer();
+        Assert.True(await WaitUntilAsync(() => _acceptorMirror.Status.Phase == ScreenMirrorPhase.IncomingRequest, WaitTimeout));
+
+        _acceptorMirror.RespondToIncomingRequest(accept: true, allowControl: false, shareAudio: false);
+
+        Assert.True(await WaitUntilAsync(() => _initiatorMirror.Status is { Phase: ScreenMirrorPhase.Viewing, Width: > 0 }, WaitTimeout));
+        Assert.Null(_initiatorMirror.Status.AudioSampleRate);
+        Assert.False(_acceptorMirror.Status.ShareAudio);
+    }
 
     [Fact]
     public async Task RequestThenDecline_ReturnsBothSidesToIdleAndNotifiesRequester()

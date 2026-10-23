@@ -37,6 +37,10 @@
                             <materialDesign:PackIcon Kind="SquareOutline" Width="18" Height="18"/>
                         </Button>
                     </StackPanel>
+                    <Button x:Name="MuteButton" Style="{StaticResource Brand.Button.Icon.OnGradient}" Width="34" Height="34" Margin="0,0,4,0"
+                            ToolTip="靜音/取消靜音" Click="MuteButton_Click" Focusable="False" Visibility="Collapsed">
+                        <materialDesign:PackIcon x:Name="MuteIcon" Kind="VolumeHigh" Width="18" Height="18"/>
+                    </Button>
                     <Button x:Name="FullScreenButton" Style="{StaticResource Brand.Button.Icon.OnGradient}" Width="34" Height="34"
                             ToolTip="全螢幕(F11)" Click="FullScreenButton_Click" Focusable="False">
                         <materialDesign:PackIcon x:Name="FullScreenIcon" Kind="Fullscreen" Width="18" Height="18"/>

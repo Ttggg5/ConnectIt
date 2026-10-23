@@ -68,6 +68,9 @@ public partial class ScreenViewerWindow : Window
         ControlStateText.Text = CanControl ? "可以操控" : "僅觀看";
         AndroidNavPanel.Visibility = CanControl && IsRemoteAndroid ? Visibility.Visible : Visibility.Collapsed;
         ScreenImage.Cursor = CanControl ? Cursors.Arrow : Cursors.No;
+        // 對方有分享聲音才顯示靜音鈕。
+        MuteButton.Visibility = status.AudioSampleRate is > 0 ? Visibility.Visible : Visibility.Collapsed;
+        UpdateMuteIcon();
     }
 
     /// <summary>工作階段由控制器結束(對方停止、連線中斷)時關閉視窗,不再回頭呼叫 Stop。</summary>
@@ -364,6 +367,14 @@ public partial class ScreenViewerWindow : Window
     private void NavRecentsButton_Click(object sender, RoutedEventArgs e) => SendNav("recents");
 
     private void FullScreenButton_Click(object sender, RoutedEventArgs e) => ToggleFullScreen();
+
+    private void MuteButton_Click(object sender, RoutedEventArgs e)
+    {
+        _controller.AudioMuted = !_controller.AudioMuted;
+        UpdateMuteIcon();
+    }
+
+    private void UpdateMuteIcon() => MuteIcon.Kind = _controller.AudioMuted ? PackIconKind.VolumeOff : PackIconKind.VolumeHigh;
 
     private void ToggleFullScreen()
     {

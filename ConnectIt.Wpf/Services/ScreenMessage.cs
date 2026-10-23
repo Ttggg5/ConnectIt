@@ -16,6 +16,9 @@ namespace ConnectIt.Wpf.Services;
 /// sharer 最多只允許 <see cref="MaxFramesInFlight"/> 張還沒被確認,避免畫面在 TCP 緩衝區裡越積越多、延遲越來越大。
 /// 畫面尺寸或是否允許操控改變時 sharer 會再送一次 screen-info。允許操控時 viewer 可以送 screen-input。
 /// 任一方送 screen-stop 結束。同一時間只會有一個螢幕鏡像工作階段。
+/// 聲音(選用):分享端在 screen-info 帶上 <see cref="AudioSampleRate"/>/<see cref="AudioChannels"/> 代表有分享聲音,
+/// 之後送聲音訊框(型別 4:16-bit little-endian PCM,交錯排列);不帶(null)代表沒有分享聲音。
+/// 聲音不受畫面的 ack 流量控制,沒聲音(全部是 0)的片段不送。
 /// 舊版(不支援螢幕鏡像)收到不認得的訊框型別會直接忽略,所以發起端要自己逾時。
 /// </summary>
 public sealed class ScreenMessage
@@ -74,6 +77,12 @@ public sealed class ScreenMessage
     public string? Key { get; init; }
 
     public string? Text { get; init; }
+
+    /// <summary>screen-info:分享端有分享聲音時的取樣率(例如 48000),沒有分享聲音時為 null。</summary>
+    public int? AudioSampleRate { get; init; }
+
+    /// <summary>screen-info:聲音的聲道數(目前一律是 2,立體聲)。</summary>
+    public int? AudioChannels { get; init; }
 
     /// <summary>screen-reject 的原因,見 <see cref="ScreenRejectReason"/>。</summary>
     public string? Reason { get; init; }

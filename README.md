@@ -25,6 +25,7 @@
 - **獨立的觀看視窗**:對方的畫面顯示在另一個可自由縮放的視窗,F11 全螢幕,工具列顯示是否可以操控與即時更新率。
 - **遠端操控(需分享端同意)**:分享端在同意/分享時勾選「允許對方操控」(預設不勾、分享中隨時可以取消),觀看端在畫面上的滑鼠點擊/拖曳/滾輪與鍵盤輸入(含 Ctrl/Alt 組合鍵、中文輸入法打的字)會轉送給對方。對方是 Android 時,點擊/拖曳 = 觸控手勢、右鍵 = 返回,工具列另有主畫面/最近使用。
 - **只分享主螢幕**:包含滑鼠游標;用 DXGI Desktop Duplication 擷取(2560×1440 一張連壓縮約 11ms,最高 60fps),遠端桌面工作階段等不支援的環境自動改用 GDI。畫面沒有變化時不送出,靜止的桌面幾乎不佔頻寬。解析度高於 1920 時等比例縮小。
+- **同時分享聲音(選用)**:分享/同意時可以勾選「同時分享這台電腦的聲音」(預設勾選,分享中也能隨時開關),用 WASAPI loopback 擷取所有正在播放的聲音;觀看視窗有靜音鈕。對方是 Android 時一樣可以聽到手機播放的聲音。
 - **限制**:Windows 不允許一般權限的程式操作以系統管理員身分執行的視窗(例如工作管理員、UAC 提示),這些視窗在遠端看得到但無法操控;UAC 安全桌面/鎖定畫面期間畫面會停住。
 
 ### 影片伺服器
@@ -58,6 +59,7 @@
 | `ConnectIt.Wpf/Services/ConnectionService.cs` | 負責 TCP 連線交握(請求/接受/拒絕)、斷線偵測,以及連線建立後的檔案/資料夾傳輸訊框協定 |
 | `ConnectIt.Wpf/Services/ScreenMirrorController.cs` | 螢幕鏡像的狀態機(請求/邀請/接受/拒絕/停止、流量控制、畫面解碼),跑在配對連線上 |
 | `ConnectIt.Wpf/Services/ScreenCaptureService.cs`、`DesktopDuplicationSource.cs`、`ScreenInputInjector.cs` | 分享端:DXGI Desktop Duplication(失敗時 GDI)擷取主螢幕、縮放、畫游標、壓成 JPEG;用 SendInput 注入遠端的滑鼠/鍵盤操作 |
+| `ConnectIt.Wpf/Services/ScreenAudioCapture.cs` | 螢幕鏡像的聲音:WASAPI loopback 擷取(分享端)與低延遲播放(觀看端),使用 NAudio |
 | `ConnectIt.Wpf/ScreenViewerWindow.xaml` | 觀看端的獨立視窗,轉送滑鼠/鍵盤操作 |
 | `ConnectIt.Wpf/Services/ThemeService.cs` | 負責套用與儲存淺色/深色/跟隨系統的顏色主題 |
 | `ConnectIt.Wpf/Services/FileTransferSettingsService.cs` | 負責儲存接收檔案要存放的資料夾設定 |
@@ -107,7 +109,8 @@ dotnet test
 1. 跟檔案傳輸共用同一條已配對的 TCP 連線,另外加兩種訊框型別:型別 2 = 螢幕鏡像控制訊息(UTF-8 JSON,見 `ScreenMessage.cs`),型別 3 = 一張畫面(`[4 bytes big-endian 序號][JPEG]`)。舊版收到不認得的型別會直接忽略,所以發起端另外有 60 秒逾時。
 2. 觀看端送 `screen-request`(或分享端送 `screen-offer`),對方同意後分享端開始擷取並送出 `screen-info`(畫面尺寸、平台、是否允許操控),之後持續送畫面。
 3. 流量控制:觀看端每解碼完一張就回 `screen-ack`,分享端最多只允許 4 張還沒被確認——網路變慢時直接跳過中間的畫面,而不是讓延遲越積越多。
-4. 允許操控時,觀看端送 `screen-input`(座標一律是 0~1 的相對位置,按鍵用網頁 `KeyboardEvent.key` 的命名),分享端用 SendInput(Windows)或無障礙服務的手勢(Android)重播。工作階段結束時所有按住的按鍵/滑鼠鍵一律放開。
+4. 聲音(選用):分享端在 `screen-info` 帶上 `AudioSampleRate`/`AudioChannels` 代表有分享聲音,之後用型別 4 的訊框送 16-bit PCM(約 1.5Mbps,沒聲音的片段不送)。聲音不受畫面的 ack 流量控制;播放端緩衝超過 200ms 就清掉,不會越拖越慢。
+5. 允許操控時,觀看端送 `screen-input`(座標一律是 0~1 的相對位置,按鍵用網頁 `KeyboardEvent.key` 的命名),分享端用 SendInput(Windows)或無障礙服務的手勢(Android)重播。工作階段結束時所有按住的按鍵/滑鼠鍵一律放開。
 
 ### 影片伺服器
 

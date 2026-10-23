@@ -37,6 +37,7 @@ public sealed class ConnectionService : IDisposable
         public const byte Chunk = 1;
         public const byte ScreenControl = 2;
         public const byte ScreenFrame = 3;
+        public const byte ScreenAudio = 4;
     }
 
     /// <summary>單一訊框的資料長度上限(扣掉 1 個型別 byte),螢幕畫面的 JPEG 也必須壓在這之內。</summary>
@@ -107,6 +108,9 @@ public sealed class ConnectionService : IDisposable
 
     /// <summary>收到一張螢幕畫面:[序號 4 bytes][JPEG]。在讀取迴圈上觸發,解碼請另外開工作。</summary>
     public event EventHandler<byte[]>? ScreenFrameReceived;
+
+    /// <summary>收到一段螢幕鏡像的聲音(16-bit PCM)。在讀取迴圈上觸發,不能阻塞太久。</summary>
+    public event EventHandler<byte[]>? ScreenAudioReceived;
 
     /// <summary>開始監聽,回傳實際使用的連接埠(0 代表由系統挑選)。</summary>
     public int StartListening(int preferredPort = 0)
@@ -477,6 +481,10 @@ public sealed class ConnectionService : IDisposable
                 {
                     ScreenFrameReceived?.Invoke(this, payload);
                 }
+                else if (type == FrameType.ScreenAudio)
+                {
+                    ScreenAudioReceived?.Invoke(this, payload);
+                }
             }
         }
         catch (OperationCanceledException)
@@ -576,6 +584,10 @@ public sealed class ConnectionService : IDisposable
     /// <summary>送出一張螢幕畫面。<paramref name="payload"/> 前 4 bytes 必須已經填好 big-endian 的序號,後面接 JPEG。</summary>
     public Task SendScreenFrameAsync(ReadOnlyMemory<byte> payload, CancellationToken token = default) =>
         WriteFrameAsync(FrameType.ScreenFrame, payload, token);
+
+    /// <summary>送出一段螢幕鏡像的聲音(16-bit little-endian PCM,交錯排列)。</summary>
+    public Task SendScreenAudioAsync(ReadOnlyMemory<byte> pcm, CancellationToken token = default) =>
+        WriteFrameAsync(FrameType.ScreenAudio, pcm, token);
 
     private static async Task<(byte Type, byte[] Payload)?> ReadFrameAsync(NetworkStream stream, CancellationToken token)
     {

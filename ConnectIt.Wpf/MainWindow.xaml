@@ -379,6 +379,9 @@
                                         <Ellipse Style="{StaticResource Brand.BreathingDot}" Fill="#EF4444" VerticalAlignment="Center"/>
                                         <TextBlock Text="正在分享你的螢幕" Margin="8,0,0,0" VerticalAlignment="Center"/>
                                     </StackPanel>
+                                    <CheckBox x:Name="ShareAudioCheckBox" AutomationProperties.AutomationId="ShareAudioCheckBox"
+                                              Content="同時分享這台電腦的聲音" Margin="0,10,0,0"
+                                              Checked="ShareAudioCheckBox_Changed" Unchecked="ShareAudioCheckBox_Changed"/>
                                     <CheckBox x:Name="AllowRemoteControlCheckBox" AutomationProperties.AutomationId="AllowRemoteControlCheckBox"
                                               Content="允許對方操控這台電腦(滑鼠與鍵盤)" Margin="0,10,0,0"
                                               Checked="AllowRemoteControlCheckBox_Changed" Unchecked="AllowRemoteControlCheckBox_Changed"/>

@@ -30,13 +30,19 @@ public enum ScreenMirrorPhase
 }
 
 /// <summary>螢幕鏡像目前的狀態快照。Width/Height 是畫面尺寸(分享中是我的、觀看中是對方的,還不知道時為 0)。</summary>
+/// <remarks>
+/// <see cref="ShareAudio"/>:分享中是否真的在分享聲音(使用者有勾選、而且成功開始擷取);
+/// <see cref="AudioSampleRate"/>:觀看中對方有分享聲音時的取樣率,沒有聲音時為 null。
+/// </remarks>
 public sealed record ScreenMirrorStatus(
     ScreenMirrorPhase Phase,
     string? SessionId = null,
     bool AllowControl = false,
     int Width = 0,
     int Height = 0,
-    string? Platform = null)
+    string? Platform = null,
+    bool ShareAudio = false,
+    int? AudioSampleRate = null)
 {
     public static readonly ScreenMirrorStatus Idle = new(ScreenMirrorPhase.Idle);
 }
@@ -96,6 +102,23 @@ public sealed class ScreenMirrorController : IDisposable
 
     private ScreenMirrorStatus _status = ScreenMirrorStatus.Idle;
     private bool _pendingOfferAllowControl;
+    private bool _pendingOfferShareAudio;
+
+    // ---- 聲音 ----
+    private ScreenAudioCapture? _audioCapture;
+    private ScreenAudioPlayer? _audioPlayer;
+    private bool _audioMuted;
+
+    /// <summary>
+    /// 要送出的聲音片段,由單一工作依序送出(順序不能亂)。網路塞住時只保留最新的一小段,
+    /// 舊的直接丟掉——聲音晚到不如不要。
+    /// </summary>
+    private readonly System.Threading.Channels.Channel<byte[]> _audioOut =
+        System.Threading.Channels.Channel.CreateBounded<byte[]>(new System.Threading.Channels.BoundedChannelOptions(25)
+        {
+            FullMode = System.Threading.Channels.BoundedChannelFullMode.DropOldest,
+            SingleReader = true,
+        });
     private CancellationTokenSource? _timeoutCts;
 
     // ---- 分享端 ----
@@ -113,6 +136,8 @@ public sealed class ScreenMirrorController : IDisposable
         _connection = connection;
         _connection.ScreenMessageReceived += (_, message) => HandleMessage(message);
         _connection.ScreenFrameReceived += (_, payload) => HandleFrame(payload);
+        _connection.ScreenAudioReceived += (_, pcm) => HandleAudio(pcm);
+        _ = RunAudioSenderAsync();
     }
 
     public ScreenMirrorStatus Status
@@ -161,7 +186,7 @@ public sealed class ScreenMirrorController : IDisposable
     }
 
     /// <summary>邀請對方觀看我的螢幕。</summary>
-    public void StartShareOffer(bool allowControl)
+    public void StartShareOffer(bool allowControl, bool shareAudio = false)
     {
         string id;
         lock (_sync)
@@ -173,6 +198,7 @@ public sealed class ScreenMirrorController : IDisposable
 
             id = NewSessionId();
             _pendingOfferAllowControl = allowControl;
+            _pendingOfferShareAudio = shareAudio;
             SetStatus(new ScreenMirrorStatus(ScreenMirrorPhase.OutgoingOffer, id));
             StartTimeout(id, "對方沒有回應。對方可能還沒按下接受,或使用的是不支援螢幕鏡像的舊版 ConnectIt。");
         }
@@ -181,7 +207,7 @@ public sealed class ScreenMirrorController : IDisposable
         RaiseStatusChanged();
     }
 
-    public void RespondToIncomingRequest(bool accept, bool allowControl)
+    public void RespondToIncomingRequest(bool accept, bool allowControl, bool shareAudio = false)
     {
         string id;
         lock (_sync)
@@ -205,7 +231,7 @@ public sealed class ScreenMirrorController : IDisposable
             return;
         }
 
-        StartSharing(id, allowControl);
+        StartSharing(id, allowControl, shareAudio);
     }
 
     public void RespondToIncomingOffer(bool accept)
@@ -252,6 +278,59 @@ public sealed class ScreenMirrorController : IDisposable
 
         Send(new ScreenMessage { Type = ScreenMessage.Stop, SessionId = id });
         RaiseStatusChanged();
+    }
+
+    /// <summary>分享中切換是否同時分享聲音。</summary>
+    public void SetShareAudio(bool share)
+    {
+        ScreenMirrorStatus updated;
+        lock (_sync)
+        {
+            if (_status.Phase != ScreenMirrorPhase.Sharing || _status.ShareAudio == share)
+            {
+                return;
+            }
+        }
+
+        var started = share && StartAudioCapture();
+        lock (_sync)
+        {
+            if (_status.Phase != ScreenMirrorPhase.Sharing)
+            {
+                StopAudioCaptureLocked();
+                return;
+            }
+
+            if (!share)
+            {
+                StopAudioCaptureLocked();
+            }
+
+            updated = _status with { ShareAudio = started };
+            SetStatus(updated);
+        }
+
+        if (share && !started)
+        {
+            Notice?.Invoke(this, "無法擷取這台電腦的聲音(可能沒有可用的音效輸出裝置)。");
+        }
+
+        SendInfo(updated);
+        RaiseStatusChanged();
+    }
+
+    /// <summary>觀看中是否把對方的聲音靜音(只影響本機播放)。</summary>
+    public bool AudioMuted
+    {
+        get => _audioMuted;
+        set
+        {
+            _audioMuted = value;
+            if (_audioPlayer is { } player)
+            {
+                player.Muted = value;
+            }
+        }
     }
 
     /// <summary>分享中切換是否允許對方操控。</summary>
@@ -370,8 +449,10 @@ public sealed class ScreenMirrorController : IDisposable
 
         string? notice = null;
         ScreenMessage? reply = null;
+        var updateAudioPlayer = false;
         var startSharing = false;
         var allowControl = false;
+        var shareAudio = false;
 
         lock (_sync)
         {
@@ -393,6 +474,7 @@ public sealed class ScreenMirrorController : IDisposable
                     {
                         startSharing = true;
                         allowControl = _pendingOfferAllowControl;
+                        shareAudio = _pendingOfferShareAudio;
                     }
 
                     break;
@@ -420,7 +502,10 @@ public sealed class ScreenMirrorController : IDisposable
                             Height = message.Height ?? _status.Height,
                             Platform = message.Platform ?? _status.Platform,
                             AllowControl = message.AllowControl ?? _status.AllowControl,
+                            // 聲音欄位不能沿用舊值:分享端關掉聲音時就是不帶這兩個欄位。
+                            AudioSampleRate = message.AudioSampleRate,
                         });
+                        updateAudioPlayer = true;
                     }
 
                     break;
@@ -448,8 +533,13 @@ public sealed class ScreenMirrorController : IDisposable
 
         if (startSharing)
         {
-            StartSharing(id, allowControl);
+            StartSharing(id, allowControl, shareAudio);
             return;
+        }
+
+        if (updateAudioPlayer)
+        {
+            UpdateAudioPlayer(message.AudioSampleRate, message.AudioChannels);
         }
 
         RaiseStatusChanged();
@@ -589,8 +679,9 @@ public sealed class ScreenMirrorController : IDisposable
         }
     }
 
-    private void StartSharing(string id, bool allowControl)
+    private void StartSharing(string id, bool allowControl, bool shareAudio)
     {
+        var audioStarted = shareAudio && StartAudioCapture();
         var (screenWidth, screenHeight) = ScreenCaptureService.PrimaryScreenSize();
         var (width, height) = ScreenCaptureService.TargetSize(screenWidth, screenHeight);
         CancellationTokenSource cts;
@@ -603,8 +694,13 @@ public sealed class ScreenMirrorController : IDisposable
             _senderCts = cts;
             _lastSentSeq = 0;
             _lastAckedSeq = 0;
-            sharing = new ScreenMirrorStatus(ScreenMirrorPhase.Sharing, id, allowControl, width, height, "windows");
+            sharing = new ScreenMirrorStatus(ScreenMirrorPhase.Sharing, id, allowControl, width, height, "windows", audioStarted);
             SetStatus(sharing);
+        }
+
+        if (shareAudio && !audioStarted)
+        {
+            Notice?.Invoke(this, "無法擷取這台電腦的聲音(可能沒有可用的音效輸出裝置),只分享畫面。");
         }
 
         // 先告訴觀看端畫面尺寸(對觀看請求來說這也代表「已同意」),不用等第一張畫面擷取成功。
@@ -733,7 +829,107 @@ public sealed class ScreenMirrorController : IDisposable
         AllowControl = sharing.AllowControl,
         X = cursor?.X,
         Y = cursor?.Y,
+        AudioSampleRate = sharing.ShareAudio ? _audioCapture?.SampleRate : null,
+        AudioChannels = sharing.ShareAudio ? ScreenAudioCapture.OutputChannels : null,
     });
+
+    // ===================== 聲音 =====================
+
+    /// <summary>開始擷取系統聲音(分享端),成功回傳 true。</summary>
+    private bool StartAudioCapture()
+    {
+        ScreenAudioCapture capture;
+        try
+        {
+            capture = new ScreenAudioCapture();
+            capture.DataAvailable += (buffer, length) => _audioOut.Writer.TryWrite(buffer.AsSpan(0, length).ToArray());
+            capture.Start();
+        }
+        catch
+        {
+            return false;
+        }
+
+        ScreenAudioCapture? previous;
+        lock (_sync)
+        {
+            previous = _audioCapture;
+            _audioCapture = capture;
+        }
+
+        previous?.Dispose();
+        return true;
+    }
+
+    /// <summary>必須在 <see cref="_sync"/> 鎖內呼叫;實際的釋放丟到背景,不在鎖內等擷取執行緒停下來。</summary>
+    private void StopAudioCaptureLocked()
+    {
+        if (_audioCapture is { } capture)
+        {
+            _audioCapture = null;
+            _ = Task.Run(capture.Dispose);
+        }
+    }
+
+    private async Task RunAudioSenderAsync()
+    {
+        await foreach (var pcm in _audioOut.Reader.ReadAllAsync().ConfigureAwait(false))
+        {
+            if (Status.Phase != ScreenMirrorPhase.Sharing)
+            {
+                continue;
+            }
+
+            try
+            {
+                await _connection.SendScreenAudioAsync(pcm).ConfigureAwait(false);
+            }
+            catch
+            {
+                // 連線斷了,交給監控迴圈處理。
+            }
+        }
+    }
+
+    /// <summary>觀看端:依對方 screen-info 裡的聲音格式建立/重建/關閉播放器。</summary>
+    private void UpdateAudioPlayer(int? sampleRate, int? channels)
+    {
+        ScreenAudioPlayer? toDispose = null;
+        lock (_sync)
+        {
+            var player = _audioPlayer;
+            var wanted = _status.Phase == ScreenMirrorPhase.Viewing && sampleRate is > 0;
+            if (wanted && player != null && player.SampleRate == sampleRate && player.Channels == (channels ?? 2))
+            {
+                return;
+            }
+
+            toDispose = player;
+            _audioPlayer = null;
+            if (wanted)
+            {
+                try
+                {
+                    _audioPlayer = new ScreenAudioPlayer(sampleRate!.Value, channels ?? 2) { Muted = _audioMuted };
+                }
+                catch
+                {
+                    // 沒有音效輸出裝置:只看畫面。
+                    _audioPlayer = null;
+                }
+            }
+        }
+
+        toDispose?.Dispose();
+    }
+
+    private void HandleAudio(byte[] pcm)
+    {
+        if (Status.Phase == ScreenMirrorPhase.Viewing)
+        {
+            _audioPlayer?.Add(pcm);
+        }
+    }
 
     /// <summary>回到 Idle 並停止所有進行中的工作。必須在 <see cref="_sync"/> 鎖內呼叫。</summary>
     private void ResetLocked()
@@ -744,6 +940,13 @@ public sealed class ScreenMirrorController : IDisposable
         if (_status.Phase == ScreenMirrorPhase.Sharing)
         {
             _injector.ReleaseAll();
+        }
+
+        StopAudioCaptureLocked();
+        if (_audioPlayer is { } player)
+        {
+            _audioPlayer = null;
+            _ = Task.Run(player.Dispose);
         }
 
         SetStatus(ScreenMirrorStatus.Idle);
@@ -819,5 +1022,6 @@ public sealed class ScreenMirrorController : IDisposable
         }
 
         _ackSignal.Dispose();
+        _audioOut.Writer.TryComplete();
     }
 }
