@@ -127,6 +127,15 @@ public sealed class PeerSession : IDisposable
     /// <summary>收到一段螢幕鏡像的聲音(16-bit PCM)。在讀取迴圈上觸發,不能阻塞太久。</summary>
     public event EventHandler<byte[]>? ScreenAudioReceived;
 
+    /// <summary>傳送中連線就斷了:還沒送完的內容(在 <see cref="Closed"/> 之前觸發),之後可以用 <see cref="ResumeSendAsync"/> 繼續。</summary>
+    public event EventHandler<PendingSend>? TransferInterrupted;
+
+    /// <summary>接收端的續傳紀錄(見 <see cref="Services.ResumeStore"/>);沒有設定時不支援續傳。</summary>
+    internal ResumeStore? ResumeStore { get; set; }
+
+    /// <summary>續傳紀錄只對認得出是哪台裝置(有 DeviceId)的連線有意義。</summary>
+    private bool CanResume => ResumeStore != null && RemoteDeviceId != null;
+
     /// <summary>這條連線上是不是有一個等待使用者回應、TransferId 相符的檔案或資料夾提議。</summary>
     internal bool HasPendingOffer(string transferId) =>
         (_activeTransfer is { Direction: FileTransferDirection.Receiving, FileStream: null } transfer && transfer.TransferId == transferId)
@@ -271,8 +280,14 @@ public sealed class PeerSession : IDisposable
             }
         }
 
+        // 傳送中斷掉的話,先記下還沒送完的內容,讓同一台裝置重新連線後可以繼續。
+        if (BuildPendingSend() is { } pending)
+        {
+            TransferInterrupted?.Invoke(this, pending);
+        }
+
         // 不論是對方斷線、本機主動斷線還是發生例外,只要還有進行中的檔案/資料夾傳輸就必須清乾淨
-        // (關閉/刪除尚未寫完的接收檔案),避免留下殘破的檔案或卡住的狀態。
+        // (接收中的檔案:能續傳就保留下來並記錄,不能就刪掉),避免留下殘破的檔案或卡住的狀態。
         AbortActiveTransfer(FileTransferEndReason.ConnectionClosed);
         AbortActiveFolderSession(FileTransferEndReason.ConnectionClosed);
 
@@ -440,6 +455,7 @@ public sealed class PeerSession : IDisposable
             FileName = info.Name,
             TotalBytes = info.Length,
             FilePath = info.FullName,
+            ResumeKey = ResumeKeys.ForFile(info),
         };
         _activeTransfer = transfer;
 
@@ -451,6 +467,7 @@ public sealed class PeerSession : IDisposable
             TransferId = transfer.TransferId,
             FileName = transfer.FileName,
             Size = transfer.TotalBytes,
+            ResumeKey = transfer.ResumeKey,
         }).ConfigureAwait(false);
     }
 
@@ -460,7 +477,8 @@ public sealed class PeerSession : IDisposable
     /// 會依序沿用既有的 file-offer/file-accept/Chunk/file-complete 狀態機自動傳送,
     /// 不會再逐一詢問使用者。
     /// </summary>
-    public async Task SendFolderAsync(string folderPath)
+    /// <param name="skipRelativePaths">續傳時:已經送完、這次不用再送的檔案(相對路徑)。</param>
+    public async Task SendFolderAsync(string folderPath, IReadOnlySet<string>? skipRelativePaths = null)
     {
         if (IsClosed)
         {
@@ -489,6 +507,7 @@ public sealed class PeerSession : IDisposable
                     FullPath: fullPath,
                     RelativePath: Path.GetRelativePath(info.FullName, fullPath).Replace('\\', '/'),
                     Size: new FileInfo(fullPath).Length))
+                .Where(file => skipRelativePaths == null || !skipRelativePaths.Contains(file.RelativePath))
                 .ToList();
         }
         catch (Exception ex)
@@ -512,7 +531,14 @@ public sealed class PeerSession : IDisposable
             TotalEntries = files.Count,
             PendingFiles = new Queue<(string, string, long)>(files),
             IsBatch = false,
+            SourceFolderPath = info.FullName,
+            ResumeKey = ResumeKeys.ForFolder(info),
         };
+        foreach (var done in skipRelativePaths ?? new HashSet<string>())
+        {
+            session.CompletedRelativePaths.Add(done);
+        }
+
         _activeFolderSession = session;
 
         StatusChanged?.Invoke(this, $"已送出資料夾「{session.FolderName}」({session.TotalEntries} 個檔案)的傳送請求,等待對方確認...");
@@ -524,6 +550,7 @@ public sealed class PeerSession : IDisposable
             FileName = session.FolderName,
             Size = session.TotalBytes,
             TotalEntries = session.TotalEntries,
+            ResumeKey = session.ResumeKey,
         }).ConfigureAwait(false);
     }
 
@@ -622,9 +649,10 @@ public sealed class PeerSession : IDisposable
         try
         {
             Directory.CreateDirectory(downloadFolder);
-            var destinationPath = GetUniqueDestinationPath(downloadFolder, transfer.FileName);
-            transfer.FileStream = new FileStream(destinationPath, FileMode.CreateNew, FileAccess.Write);
-            transfer.SavedFilePath = destinationPath;
+            if (!TryResumeReceive(transfer, null))
+            {
+                OpenNewReceiveFile(transfer, GetUniqueDestinationPath(downloadFolder, transfer.FileName));
+            }
         }
         catch (Exception ex)
         {
@@ -677,10 +705,22 @@ public sealed class PeerSession : IDisposable
                 // 多個各自獨立的檔案:不另外建立一層子資料夾,直接落在下載資料夾裡。
                 session.RootDestinationFolder = downloadFolder;
             }
+            else if (CanResume && ResumeStore!.Find(RemoteDeviceId, session.ResumeKey) is { IsFolder: true } previous
+                     && Directory.Exists(previous.FinalPath))
+            {
+                // 續傳:沿用上次還沒收完的那個資料夾,已經收完的檔案傳送端不會再送。
+                session.RootDestinationFolder = previous.FinalPath;
+            }
             else
             {
                 session.RootDestinationFolder = GetUniqueDestinationDirectory(downloadFolder, session.FolderName);
                 Directory.CreateDirectory(session.RootDestinationFolder);
+            }
+
+            if (!session.IsBatch && CanResume && session.ResumeKey != null)
+            {
+                ResumeStore!.Save(new ResumeEntry(RemoteDeviceId!, session.ResumeKey, session.RootDestinationFolder,
+                    session.RootDestinationFolder, IsFolder: true, DateTime.UtcNow));
             }
         }
         catch (Exception ex)
@@ -832,6 +872,7 @@ public sealed class PeerSession : IDisposable
             Direction = FileTransferDirection.Receiving,
             FileName = SanitizeFileName(message.FileName),
             TotalBytes = message.Size!.Value,
+            ResumeKey = message.ResumeKey,
         };
         _activeTransfer = transfer;
 
@@ -864,6 +905,7 @@ public sealed class PeerSession : IDisposable
             TotalBytes = message.Size!.Value,
             TotalEntries = message.TotalEntries!.Value,
             IsBatch = isBatch,
+            ResumeKey = message.ResumeKey,
         };
         _activeFolderSession = session;
 
@@ -910,7 +952,6 @@ public sealed class PeerSession : IDisposable
         {
             var directory = Path.GetDirectoryName(destinationPath)!;
             Directory.CreateDirectory(directory);
-            destinationPath = GetUniqueDestinationPath(directory, Path.GetFileName(destinationPath));
 
             transfer = new ActiveTransfer
             {
@@ -920,9 +961,14 @@ public sealed class PeerSession : IDisposable
                 TotalBytes = message.Size!.Value,
                 FolderTransferId = session.FolderTransferId,
                 EntryIndex = message.EntryIndex,
-                FileStream = new FileStream(destinationPath, FileMode.CreateNew, FileAccess.Write),
-                SavedFilePath = destinationPath,
+                ResumeKey = message.ResumeKey,
             };
+            // 續傳只接受落在同一個資料夾裡的部分檔案,避免寫到別的地方去。
+            if (!TryResumeReceive(transfer, fullRoot))
+            {
+                OpenNewReceiveFile(transfer, GetUniqueDestinationPath(directory, Path.GetFileName(destinationPath)));
+            }
+
             _activeTransfer = transfer;
         }
         catch (Exception ex)
@@ -1005,6 +1051,7 @@ public sealed class PeerSession : IDisposable
         }
 
         _activeFolderSession = null;
+        ResumeStore?.Remove(RemoteDeviceId, session.ResumeKey);
         FolderTransferEnded?.Invoke(this, new FolderTransferEndedEventArgs
         {
             TransferId = session.FolderTransferId,
@@ -1048,6 +1095,8 @@ public sealed class PeerSession : IDisposable
             FilePath = fullPath,
             FolderTransferId = session.FolderTransferId,
             EntryIndex = entryIndex,
+            RelativePath = relativePath,
+            ResumeKey = ResumeKeys.ForFile(new FileInfo(fullPath)),
         };
         _activeTransfer = transfer;
 
@@ -1061,6 +1110,7 @@ public sealed class PeerSession : IDisposable
             RelativePath = relativePath,
             EntryIndex = entryIndex,
             TotalEntries = session.TotalEntries,
+            ResumeKey = transfer.ResumeKey,
         });
     }
 
@@ -1072,6 +1122,8 @@ public sealed class PeerSession : IDisposable
             return;
         }
 
+        // 續傳:對方已經有前面這些位元組,從這裡開始送。
+        transfer.TransferredBytes = Math.Clamp(message.Offset ?? 0, 0, transfer.TotalBytes);
         _ = SendFileChunksAsync(transfer);
     }
 
@@ -1144,6 +1196,11 @@ public sealed class PeerSession : IDisposable
         {
             session.CompletedBytes += transfer.TotalBytes;
             session.CompletedEntries += 1;
+            if (transfer.RelativePath != null)
+            {
+                session.CompletedRelativePaths.Add(transfer.RelativePath);
+            }
+
             SendNextFolderFileOrComplete(session);
             return;
         }
@@ -1211,18 +1268,115 @@ public sealed class PeerSession : IDisposable
     /// </summary>
     private async Task AcceptIncomingFileAsync(ActiveTransfer transfer)
     {
-        await WriteControlAsync(new FileControlMessage { Type = "file-accept", TransferId = transfer.TransferId }).ConfigureAwait(false);
+        await WriteControlAsync(new FileControlMessage
+        {
+            Type = "file-accept",
+            TransferId = transfer.TransferId,
+            Offset = transfer.TransferredBytes > 0 ? transfer.TransferredBytes : null,
+        }).ConfigureAwait(false);
 
-        if (transfer.TotalBytes == 0 && _activeTransfer == transfer)
+        // 0 byte 的檔案,或續傳時其實已經收完了:不會再有任何 Chunk 訊框,直接完成。
+        if (transfer.TransferredBytes == transfer.TotalBytes && _activeTransfer == transfer)
         {
             CompleteReceivedFile(transfer);
         }
     }
 
+    /// <summary>
+    /// 接收端:同一台裝置送來的 ResumeKey 有保留下來的部分檔案,就接著寫進去(TransferredBytes 從已有的大小開始)。
+    /// <paramref name="requiredRoot"/> 不是 null 時,部分檔案必須在這個資料夾底下才接受(資料夾傳輸)。
+    /// </summary>
+    private bool TryResumeReceive(ActiveTransfer transfer, string? requiredRoot)
+    {
+        if (!CanResume || ResumeStore!.Find(RemoteDeviceId, transfer.ResumeKey) is not { IsFolder: false } entry
+            || !File.Exists(entry.PartialPath)
+            || (requiredRoot != null && !Path.GetFullPath(entry.FinalPath).StartsWith(requiredRoot, StringComparison.OrdinalIgnoreCase)))
+        {
+            return false;
+        }
+
+        var existing = new FileInfo(entry.PartialPath).Length;
+        if (existing > transfer.TotalBytes)
+        {
+            return false;
+        }
+
+        transfer.FileStream = new FileStream(entry.PartialPath, FileMode.Append, FileAccess.Write);
+        transfer.PartialPath = entry.PartialPath;
+        transfer.SavedFilePath = entry.FinalPath;
+        transfer.TransferredBytes = existing;
+        StatusChanged?.Invoke(this, $"從中斷處繼續接收「{transfer.FileName}」(已有 {existing:N0} bytes)。");
+        return true;
+    }
+
+    /// <summary>接收端:先寫到「目的檔名.part」,收完才改成正式檔名,中途斷線就不會留下看起來完整但其實殘缺的檔案。</summary>
+    private static void OpenNewReceiveFile(ActiveTransfer transfer, string destinationPath)
+    {
+        var partialPath = destinationPath + PartialFileSuffix;
+        transfer.FileStream = new FileStream(partialPath, FileMode.Create, FileAccess.Write);
+        transfer.PartialPath = partialPath;
+        transfer.SavedFilePath = destinationPath;
+    }
+
+    private const string PartialFileSuffix = ".part";
+
+    /// <summary>傳送端:連線中斷時還沒送完的內容(沒有在傳送就是 null)。</summary>
+    private PendingSend? BuildPendingSend()
+    {
+        if (_activeFolderSession is { Direction: FileTransferDirection.Sending } folder)
+        {
+            if (!folder.IsBatch && folder.SourceFolderPath != null)
+            {
+                return new PendingSend(folder.FolderName, [], folder.SourceFolderPath, new HashSet<string>(folder.CompletedRelativePaths));
+            }
+
+            var remaining = new List<string>();
+            if (_activeTransfer is { Direction: FileTransferDirection.Sending, FilePath: { } current })
+            {
+                remaining.Add(current);
+            }
+
+            remaining.AddRange(folder.PendingFiles?.Select(f => f.FullPath) ?? []);
+            return remaining.Count == 0 ? null : new PendingSend($"{remaining.Count} 個檔案", remaining, null, new HashSet<string>());
+        }
+
+        return _activeTransfer is { Direction: FileTransferDirection.Sending, FilePath: { } path, FileName: var name }
+            ? new PendingSend(name, [path], null, new HashSet<string>())
+            : null;
+    }
+
+    /// <summary>
+    /// 繼續連線中斷前沒送完的內容(見 <see cref="TransferInterrupted"/>)。檔案都帶著一樣的 ResumeKey,
+    /// 對方保留了部分檔案的話會從中斷處接著收;資料夾已經送完的檔案不會再送。
+    /// </summary>
+    public Task ResumeSendAsync(PendingSend pending) =>
+        pending.FolderPath != null
+            ? SendFolderAsync(pending.FolderPath, pending.CompletedRelativePaths)
+            : SendFilesAsync(pending.FilePaths.Where(File.Exists).ToList());
+
     private void CompleteReceivedFile(ActiveTransfer transfer)
     {
         _activeTransfer = null;
         transfer.FileStream!.Dispose();
+        if (transfer.PartialPath != null && transfer.SavedFilePath != null)
+        {
+            try
+            {
+                // 收完了:「.part」改成正式檔名(這段期間如果出現同名檔案,改用「名稱 (1)」)。
+                var finalPath = File.Exists(transfer.SavedFilePath)
+                    ? GetUniqueDestinationPath(Path.GetDirectoryName(transfer.SavedFilePath)!, Path.GetFileName(transfer.SavedFilePath))
+                    : transfer.SavedFilePath;
+                File.Move(transfer.PartialPath, finalPath);
+                transfer.SavedFilePath = finalPath;
+            }
+            catch (Exception ex)
+            {
+                StatusChanged?.Invoke(this, $"無法把「{transfer.FileName}」改成正式檔名:{ex.Message}");
+                transfer.SavedFilePath = transfer.PartialPath;
+            }
+        }
+
+        ResumeStore?.Remove(RemoteDeviceId, transfer.ResumeKey);
         _ = WriteControlAsync(new FileControlMessage { Type = "file-complete", TransferId = transfer.TransferId });
 
         if (transfer.FolderTransferId is { } folderTransferId
@@ -1248,6 +1402,11 @@ public sealed class PeerSession : IDisposable
         try
         {
             await using var fileStream = new FileStream(transfer.FilePath!, FileMode.Open, FileAccess.Read, FileShare.Read);
+            if (transfer.TransferredBytes > 0)
+            {
+                // 續傳:對方已經有前面這些內容(見 HandleFileAccept 的 Offset)。
+                fileStream.Seek(transfer.TransferredBytes, SeekOrigin.Begin);
+            }
 
             // 讀取磁碟(生產者)跟寫入 socket(消費者)用有界 channel 重疊執行,而不是
             // 完全循序的「讀一塊→寫一塊」——這樣寫入目前這塊的同時就能開始讀下一塊,
@@ -1383,7 +1542,11 @@ public sealed class PeerSession : IDisposable
         }
 
         _activeTransfer = null;
-        CleanUpTransferResources(transfer);
+        var resumable = reason == FileTransferEndReason.ConnectionClosed && KeepPartialForResume(transfer);
+        if (!resumable)
+        {
+            CleanUpTransferResources(transfer);
+        }
 
         if (transfer.FolderTransferId != null)
         {
@@ -1396,7 +1559,38 @@ public sealed class PeerSession : IDisposable
             Direction = transfer.Direction,
             Reason = reason,
             FileName = transfer.FileName,
+            // 傳送端:對方是新版(有 DeviceId)而且傳送內容還在,重新連線後就能續傳。
+            Resumable = resumable || (reason == FileTransferEndReason.ConnectionClosed
+                && transfer.Direction == FileTransferDirection.Sending && RemoteDeviceId != null && transfer.ResumeKey != null),
         });
+    }
+
+    /// <summary>
+    /// 連線中斷時接收中的檔案:能續傳(對方有 DeviceId、提議帶了 ResumeKey、已經收到一些內容)就關檔保留,
+    /// 記到 <see cref="ResumeStore"/>,回傳 true;否則回傳 false,由呼叫端刪掉部分檔案。
+    /// </summary>
+    private bool KeepPartialForResume(ActiveTransfer transfer)
+    {
+        if (transfer.Direction != FileTransferDirection.Receiving || !CanResume || transfer.ResumeKey == null
+            || transfer.PartialPath == null || transfer.SavedFilePath == null || transfer.TransferredBytes <= 0)
+        {
+            return false;
+        }
+
+        transfer.Cts.Cancel();
+        try
+        {
+            transfer.FileStream?.Dispose();
+        }
+        catch
+        {
+            return false;
+        }
+
+        ResumeStore!.Save(new ResumeEntry(RemoteDeviceId!, transfer.ResumeKey, transfer.PartialPath, transfer.SavedFilePath,
+            IsFolder: false, DateTime.UtcNow));
+        StatusChanged?.Invoke(this, $"「{transfer.FileName}」已保留收到的 {transfer.TransferredBytes:N0} bytes,重新連線後會從中斷處繼續。");
+        return true;
     }
 
     /// <summary>連線中斷或發生無法復原的錯誤時,結束整個資料夾傳輸,不嘗試再送出任何控制訊息。</summary>
@@ -1409,6 +1603,12 @@ public sealed class PeerSession : IDisposable
         }
 
         _activeFolderSession = null;
+        var resumable = reason == FileTransferEndReason.ConnectionClosed && RemoteDeviceId != null
+            && (session.Direction == FileTransferDirection.Sending || CanResume);
+        if (!resumable)
+        {
+            ResumeStore?.Remove(RemoteDeviceId, session.ResumeKey);
+        }
 
         FolderTransferEnded?.Invoke(this, new FolderTransferEndedEventArgs
         {
@@ -1418,6 +1618,7 @@ public sealed class PeerSession : IDisposable
             FolderName = session.FolderName,
             EntryCount = session.CompletedEntries,
             IsBatch = session.IsBatch,
+            Resumable = resumable,
         });
     }
 
@@ -1454,9 +1655,10 @@ public sealed class PeerSession : IDisposable
 
         try
         {
-            if (transfer.SavedFilePath != null && File.Exists(transfer.SavedFilePath))
+            var path = transfer.PartialPath ?? transfer.SavedFilePath;
+            if (path != null && File.Exists(path))
             {
-                File.Delete(transfer.SavedFilePath);
+                File.Delete(path);
             }
         }
         catch
@@ -1482,8 +1684,11 @@ public sealed class PeerSession : IDisposable
     /// <summary>如果目的路徑的檔案已存在,依序改用「檔名 (1).副檔名」、「檔名 (2).副檔名」...直到找到未使用的檔名。</summary>
     private static string GetUniqueDestinationPath(string folder, string fileName)
     {
+        // 也要避開別的傳輸還在寫的「.part」檔(收完會改成這個檔名)。
+        static bool Taken(string path) => File.Exists(path) || File.Exists(path + PartialFileSuffix);
+
         var candidate = Path.Combine(folder, fileName);
-        if (!File.Exists(candidate))
+        if (!Taken(candidate))
         {
             return candidate;
         }
@@ -1494,7 +1699,7 @@ public sealed class PeerSession : IDisposable
         for (var i = 1; ; i++)
         {
             candidate = Path.Combine(folder, $"{nameWithoutExtension} ({i}){extension}");
-            if (!File.Exists(candidate))
+            if (!Taken(candidate))
             {
                 return candidate;
             }
@@ -1567,8 +1772,17 @@ public sealed class PeerSession : IDisposable
         /// <summary>接收端:目的檔案的寫入串流。</summary>
         public FileStream? FileStream { get; set; }
 
-        /// <summary>接收端:目的檔案的完整路徑。</summary>
+        /// <summary>接收端:目的檔案的完整路徑(收完之後的正式檔名)。</summary>
         public string? SavedFilePath { get; set; }
+
+        /// <summary>接收端:實際寫入中的「.part」檔,收完才改名成 <see cref="SavedFilePath"/>。</summary>
+        public string? PartialPath { get; set; }
+
+        /// <summary>續傳識別碼(傳送端產生,見 <see cref="ResumeKeys"/>)。</summary>
+        public string? ResumeKey { get; init; }
+
+        /// <summary>傳送端、資料夾傳輸:這個檔案相對於資料夾根目錄的路徑。</summary>
+        public string? RelativePath { get; init; }
 
         /// <summary>屬於資料夾傳輸時,所屬的資料夾傳輸 TransferId,否則為 null。</summary>
         public string? FolderTransferId { get; init; }
@@ -1604,5 +1818,14 @@ public sealed class PeerSession : IDisposable
 
         /// <summary>true 代表這是多個各自獨立的檔案一起送過來,不是使用者選了一整個資料夾。</summary>
         public required bool IsBatch { get; init; }
+
+        /// <summary>續傳識別碼(資料夾傳輸才有)。</summary>
+        public string? ResumeKey { get; init; }
+
+        /// <summary>傳送端:來源資料夾的完整路徑(續傳時重新列舉用)。</summary>
+        public string? SourceFolderPath { get; init; }
+
+        /// <summary>傳送端:已經送完(對方確認收完)的檔案相對路徑,續傳時不用再送。</summary>
+        public HashSet<string> CompletedRelativePaths { get; } = [];
     }
 }

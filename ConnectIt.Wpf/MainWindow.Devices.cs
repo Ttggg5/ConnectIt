@@ -582,7 +582,71 @@ public partial class MainWindow
 
             AppendLog($"已與 {e.RemoteName} ({e.RemoteAddress}) 建立連線。");
             ((App)Application.Current).ShowConnectionAlert("已建立連線", $"已與 {e.RemoteName} 建立連線。");
+
+            if (e.Session.RemoteDeviceId is { } deviceId && _pendingResends.Remove(deviceId, out var pending))
+            {
+                _ = OfferResumeAsync(item, pending);
+            }
         });
+    }
+
+    // ===================== 傳輸中斷後續傳(傳送端) =====================
+
+    /// <summary>傳送到一半連線就斷了:以對方的 DeviceId 記住還沒送完的內容,同一台裝置重新連線時詢問要不要繼續。</summary>
+    private readonly Dictionary<string, PendingSend> _pendingResends = new();
+
+    private void OnTransferInterrupted(object? sender, PendingSend pending)
+    {
+        if (sender is PeerSession { RemoteDeviceId: { } deviceId })
+        {
+            Dispatcher.BeginInvoke(() => _pendingResends[deviceId] = pending);
+        }
+    }
+
+    /// <summary>重新連上之前沒傳完的裝置:問使用者要不要繼續(對方保留了部分檔案的話會從中斷處接著傳)。</summary>
+    private async Task OfferResumeAsync(ConnectedPeerItem peer, PendingSend pending)
+    {
+        if (DialogHost.IsDialogOpen(RootDialogIdentifier))
+        {
+            MainSnackbar.MessageQueue?.Enqueue(
+                $"跟 {peer.Name} 之間有未完成的傳輸「{pending.DisplayName}」",
+                "繼續傳送",
+                () => _ = ResumeSendAsync(peer, pending));
+            return;
+        }
+
+        var panel = BuildScreenMirrorDialogHeader(PackIconKind.FileRestore, "繼續傳輸",
+            $"要繼續傳送「{pending.DisplayName}」給 {peer.Name} 嗎?",
+            "上次連線中斷時還沒傳完。對方保留了已收到的部分,會從中斷的地方接著傳。");
+        var (discard, resume) = AddDialogButtons(panel, "不用了", "繼續傳送");
+        var tcs = new TaskCompletionSource<bool>();
+        discard.Click += (_, _) =>
+        {
+            DialogHost.Close(RootDialogIdentifier);
+            tcs.TrySetResult(false);
+        };
+        resume.Click += (_, _) =>
+        {
+            DialogHost.Close(RootDialogIdentifier);
+            tcs.TrySetResult(true);
+        };
+        _ = DialogHost.Show(WrapInDialogCard(panel), RootDialogIdentifier);
+        if (await tcs.Task)
+        {
+            await ResumeSendAsync(peer, pending);
+        }
+    }
+
+    private async Task ResumeSendAsync(ConnectedPeerItem peer, PendingSend pending)
+    {
+        if (peer.Session.IsClosed || peer.Session.IsFileTransferActive)
+        {
+            MainSnackbar.MessageQueue?.Enqueue("目前沒辦法繼續傳送,請稍後再試。");
+            return;
+        }
+
+        ShowFileTransferPanel(peer, pending.DisplayName, "等待對方接受...");
+        await peer.Session.ResumeSendAsync(pending);
     }
 
     /// <summary>裝置卡片的「已連線」標籤:ItemsControl.Tag 放所有連線對象的位址(見 ContainedInMultiConverter)。</summary>

@@ -31,4 +31,13 @@ public sealed class FileControlMessage
     /// 這種情況下接收端不會另外建立一層子資料夾,檔案會直接落在使用者設定的下載資料夾裡。
     /// </summary>
     public bool? IsBatch { get; init; }
+
+    /// <summary>
+    /// file-offer/folder-offer:傳送端產生的續傳識別碼(見 <see cref="ResumeKeys"/>)。同一台裝置斷線重連後送來
+    /// 相同的 ResumeKey,接收端就接著寫進上次保留的部分檔案(或沿用上次的資料夾)。舊版沒有這個欄位。
+    /// </summary>
+    public string? ResumeKey { get; init; }
+
+    /// <summary>file-accept:接收端已經有的位元組數,傳送端從這裡開始送(續傳);沒有或 0 代表從頭開始。</summary>
+    public long? Offset { get; init; }
 }

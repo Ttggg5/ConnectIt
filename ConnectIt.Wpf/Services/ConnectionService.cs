@@ -63,6 +63,9 @@ public sealed class ConnectionService : IDisposable
     /// <summary>這台裝置的穩定識別碼(見 <see cref="DeviceSettingsService.DeviceId"/>),交握時送給對方。</summary>
     public string LocalDeviceId { get; set; } = Guid.NewGuid().ToString("N");
 
+    /// <summary>接收端的續傳紀錄(見 <see cref="Services.ResumeStore"/>);沒有設定時不支援續傳。</summary>
+    public ResumeStore? ResumeStore { get; set; }
+
     /// <summary>新建立的連線使用的心跳間隔。</summary>
     public TimeSpan HeartbeatInterval { get; set; } = TimeSpan.FromSeconds(4);
 
@@ -110,6 +113,7 @@ public sealed class ConnectionService : IDisposable
     public event EventHandler<ScreenMessage>? ScreenMessageReceived;
     public event EventHandler<byte[]>? ScreenFrameReceived;
     public event EventHandler<byte[]>? ScreenAudioReceived;
+    public event EventHandler<PendingSend>? TransferInterrupted;
 
     /// <summary>開始監聽,回傳實際使用的連接埠(0 代表由系統挑選)。</summary>
     public int StartListening(int preferredPort = 0)
@@ -455,6 +459,7 @@ public sealed class ConnectionService : IDisposable
     {
         session.HeartbeatInterval = HeartbeatInterval;
         session.HeartbeatTimeout = HeartbeatTimeout;
+        session.ResumeStore = ResumeStore;
 
         PeerSession[] stale;
         lock (_sessionsLock)
@@ -479,6 +484,7 @@ public sealed class ConnectionService : IDisposable
         session.ScreenMessageReceived += (_, e) => ScreenMessageReceived?.Invoke(session, e);
         session.ScreenFrameReceived += (_, e) => ScreenFrameReceived?.Invoke(session, e);
         session.ScreenAudioReceived += (_, e) => ScreenAudioReceived?.Invoke(session, e);
+        session.TransferInterrupted += (_, e) => TransferInterrupted?.Invoke(session, e);
         session.Closed += (_, byRemote) =>
         {
             lock (_sessionsLock)

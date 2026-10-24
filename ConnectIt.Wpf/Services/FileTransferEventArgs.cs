@@ -84,6 +84,9 @@ public sealed class FileTransferEndedEventArgs : EventArgs
 
     /// <summary>接收方成功完成時,檔案實際儲存的路徑。</summary>
     public string? SavedFilePath { get; init; }
+
+    /// <summary>因為連線中斷而結束,但已經保留了續傳需要的資料:同一台裝置重新連線後可以從中斷處繼續。</summary>
+    public bool Resumable { get; init; }
 }
 
 /// <summary>資料夾傳輸結束(不論是成功完成、被拒絕、被取消,還是失敗)。</summary>
@@ -105,4 +108,7 @@ public sealed class FolderTransferEndedEventArgs : EventArgs
 
     /// <summary>接收方成功完成時,檔案實際儲存的資料夾路徑(IsBatch 時就是使用者設定的下載資料夾)。</summary>
     public string? SavedFolderPath { get; init; }
+
+    /// <summary>因為連線中斷而結束,但已經保留了續傳需要的資料:同一台裝置重新連線後可以從中斷處繼續。</summary>
+    public bool Resumable { get; init; }
 }

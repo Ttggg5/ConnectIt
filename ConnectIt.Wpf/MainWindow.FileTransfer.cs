@@ -418,6 +418,10 @@ public partial class MainWindow
                 FileTransferEndReason.Rejected => $"{peerName} 拒絕接收「{e.FileName}」。",
                 FileTransferEndReason.Cancelled => $"已取消「{e.FileName}」的傳輸。",
                 FileTransferEndReason.CancelledByRemote => $"{peerName} 取消了「{e.FileName}」的傳輸。",
+                FileTransferEndReason.ConnectionClosed when e.Resumable && e.Direction == FileTransferDirection.Receiving =>
+                    $"與 {peerName} 的連線中斷了,「{e.FileName}」已保留收到的部分,重新連線後會從中斷處繼續。",
+                FileTransferEndReason.ConnectionClosed when e.Resumable =>
+                    $"與 {peerName} 的連線中斷了,重新連線後可以繼續傳送「{e.FileName}」。",
                 FileTransferEndReason.ConnectionClosed => $"與 {peerName} 的連線已中斷,「{e.FileName}」的傳輸已中止。",
                 _ => $"「{e.FileName}」傳輸失敗。",
             };
@@ -453,6 +457,8 @@ public partial class MainWindow
                     FileTransferEndReason.Rejected => $"{peerName} 拒絕接收這些檔案。",
                     FileTransferEndReason.Cancelled => $"已取消傳輸(已完成 {e.EntryCount} 個檔案)。",
                     FileTransferEndReason.CancelledByRemote => $"{peerName} 取消了傳輸(已完成 {e.EntryCount} 個檔案)。",
+                    FileTransferEndReason.ConnectionClosed when e.Resumable =>
+                        $"與 {peerName} 的連線中斷了(已完成 {e.EntryCount} 個檔案),重新連線後可以繼續。",
                     FileTransferEndReason.ConnectionClosed => $"與 {peerName} 的連線已中斷,傳輸已中止(已完成 {e.EntryCount} 個檔案)。",
                     _ => $"傳輸失敗(已完成 {e.EntryCount} 個檔案)。",
                 }
@@ -464,6 +470,8 @@ public partial class MainWindow
                     FileTransferEndReason.Rejected => $"{peerName} 拒絕接收資料夾「{e.FolderName}」。",
                     FileTransferEndReason.Cancelled => $"已取消資料夾「{e.FolderName}」的傳輸(已完成 {e.EntryCount} 個檔案)。",
                     FileTransferEndReason.CancelledByRemote => $"{peerName} 取消了資料夾「{e.FolderName}」的傳輸(已完成 {e.EntryCount} 個檔案)。",
+                    FileTransferEndReason.ConnectionClosed when e.Resumable =>
+                        $"與 {peerName} 的連線中斷了,資料夾「{e.FolderName}」已完成 {e.EntryCount} 個檔案,重新連線後可以繼續。",
                     FileTransferEndReason.ConnectionClosed => $"與 {peerName} 的連線已中斷,資料夾「{e.FolderName}」的傳輸已中止(已完成 {e.EntryCount} 個檔案)。",
                     _ => $"資料夾「{e.FolderName}」傳輸失敗(已完成 {e.EntryCount} 個檔案)。",
                 };

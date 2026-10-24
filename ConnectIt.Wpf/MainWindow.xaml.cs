@@ -26,6 +26,7 @@ public partial class MainWindow : Window
     private readonly ConnectionSettingsService _connectionSettings = new();
     private readonly DeviceSettingsService _deviceSettings = new();
     private readonly StartupService _startupService = new();
+    private readonly ResumeStore _resumeStore = new();
     private readonly ObservableCollection<DiscoveredDevice> _devices = new();
     private readonly ObservableCollection<TransferRecord> _transferHistory = new();
 
@@ -51,6 +52,9 @@ public partial class MainWindow : Window
         ConnectedPeersListBox.ItemsSource = _connectedPeers;
         _connection.LocalDeviceId = _deviceSettings.DeviceId;
         _connection.Identity = DeviceIdentity.LoadOrCreate(DeviceIdentity.DefaultPath);
+        _resumeStore.PurgeExpired();
+        _connection.ResumeStore = _resumeStore;
+        _connection.TransferInterrupted += OnTransferInterrupted;
         _devices.CollectionChanged += (_, _) => UpdateEmptyState();
         DeviceNameText.Text = MyDeviceName;
         DeviceNameTextBox.Text = MyDeviceName;
