@@ -9,6 +9,8 @@
     <UseWindowsForms>true</UseWindowsForms>
     <RuntimeIdentifiers>win-x64</RuntimeIdentifiers>
     <ApplicationIcon>Assets\AppIcon.ico</ApplicationIcon>
+    <!-- CI 用 -p:Version=1.0.{建置編號} 覆寫,自我更新(UpdateService)拿這個跟 GitHub Release 的版本比大小。 -->
+    <Version>1.0.0</Version>
   </PropertyGroup>
 
   <ItemGroup>

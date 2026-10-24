@@ -88,6 +88,15 @@ dotnet run --project ConnectIt.Wpf
 
 啟動兩個(或以上)執行個體(同一台機器上開兩個視窗,或在同一區網的兩台機器上各執行一份),即可在「裝置」頁看到彼此並互相連線傳檔案,或在「影片」頁分享/觀看影片。
 
+## 自我更新
+
+CI 在 `master` 每次建置會用 `-p:Version=1.0.{建置編號}` 發佈,並建立 GitHub Release `v1.0.{建置編號}`,
+附上整個 publish 資料夾壓成的 `ConnectIt-windows-x64.zip`。App 啟動約 8 秒後自動檢查
+`releases/latest`,有新版本就跳系統匣通知;到「設定 → 軟體更新」按「下載並更新」會下載並解壓到暫存資料夾,
+再啟動一個隱藏的 PowerShell 腳本:等 App 結束 → 用 robocopy 覆蓋到程式資料夾 → 重新啟動
+(`Services/UpdateService.cs`)。只覆蓋/新增檔案、不刪除多出來的檔案,所以存在程式資料夾裡的設定檔
+會保留。程式資料夾沒有寫入權限(例如放在 Program Files)時改為開啟下載頁讓使用者手動更新。
+
 ## 執行測試
 
 ```powershell

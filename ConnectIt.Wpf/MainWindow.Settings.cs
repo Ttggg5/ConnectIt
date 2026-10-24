@@ -70,7 +70,7 @@ public partial class MainWindow
         _settingsCards ??=
         [
             ThemeCard, DownloadFolderCard, NotificationCard, AutoStartCard, TrustedDevicesCard,
-            VideoServerSettingsCard, AdvancedCard, DiagnosticsCard,
+            VideoServerSettingsCard, AdvancedCard, UpdateCard, DiagnosticsCard,
         ];
 
         // SettingsViewRoot 是根視窗 Grid 裡明確的 Star 欄,寬度一定等於實際可用內容寬度;

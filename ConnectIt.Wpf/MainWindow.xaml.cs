@@ -13,7 +13,7 @@ namespace ConnectIt.Wpf;
 // MainWindow.FileTransfer.cs(檔案/資料夾傳輸與傳輸紀錄)、MainWindow.Settings.cs(設定頁)、
 // MainWindow.VideoServer.cs(影片伺服器主機端操作)、MainWindow.RemoteControl.cs(遙控面板)、
 // MainWindow.VideoViewer.cs(影片伺服器觀看端)、MainWindow.Onboarding.cs(首次啟動引導)、
-// MainWindow.ScreenMirror.cs(螢幕鏡像:觀看/分享螢幕與遠端操控)。
+// MainWindow.ScreenMirror.cs(螢幕鏡像:觀看/分享螢幕與遠端操控)、MainWindow.Update.cs(自我更新)。
 // 這個檔案只留下跨功能共用的欄位/建構子/視窗生命週期與導覽切換。
 public partial class MainWindow : Window
 {
@@ -88,6 +88,7 @@ public partial class MainWindow : Window
         SetThemeRadioButtonForMode(_themeService.CurrentMode);
 
         LoadSettingsIntoUi();
+        InitializeUpdateUi();
         UpdateContinueWatchingCard();
 
         NavListBox.SelectedIndex = 0;
@@ -147,6 +148,8 @@ public partial class MainWindow : Window
         {
             ShowOnboarding();
         }
+
+        StartStartupUpdateCheck();
     }
 
     private void Keyboard_ClearFocus() => FocusManager.SetFocusedElement(FocusManager.GetFocusScope(this), null);

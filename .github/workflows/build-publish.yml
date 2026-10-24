@@ -8,6 +8,9 @@ on:
 jobs:
   build:
     runs-on: windows-latest
+    # 發佈 GitHub Release 需要寫入權限(App 的自我更新從 Release 下載新版本)。
+    permissions:
+      contents: write
 
     steps:
       - name: Checkout
@@ -18,11 +21,29 @@ jobs:
         with:
           dotnet-version: "10.0.x"
 
+      # 版本號 1.0.{建置編號}:每次建置遞增,App 內的 UpdateService 拿它跟最新 Release 的 tag 比大小。
       - name: Publish self-contained win-x64 build
-        run: dotnet publish ConnectIt.Wpf/ConnectIt.Wpf.csproj -c Release -r win-x64 --self-contained true -o publish
+        run: dotnet publish ConnectIt.Wpf/ConnectIt.Wpf.csproj -c Release -r win-x64 --self-contained true -o publish -p:Version=1.0.${{ github.run_number }}
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
           name: ConnectIt-windows
           path: publish
+
+      # 只有 master 的建置會發佈成 Release(其他分支的實驗版本不會推送給使用者)。
+      # zip 的根目錄直接就是 publish 資料夾的內容,UpdateService 解壓後整包覆蓋到程式資料夾。
+      - name: Zip publish folder
+        if: github.ref == 'refs/heads/master'
+        run: Compress-Archive -Path publish\* -DestinationPath ConnectIt-windows-x64.zip
+
+      - name: Create GitHub Release
+        if: github.ref == 'refs/heads/master'
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: v1.0.${{ github.run_number }}
+          name: ConnectIt 1.0.${{ github.run_number }}
+          target_commitish: ${{ github.sha }}
+          body: ${{ github.event.head_commit.message }}
+          files: ConnectIt-windows-x64.zip
+          make_latest: true

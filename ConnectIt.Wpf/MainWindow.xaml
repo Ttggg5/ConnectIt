@@ -1430,6 +1430,41 @@
                     </Border>
 
                     <!-- 說明與診斷 -->
+                    <!-- 軟體更新 -->
+                    <Border x:Name="UpdateCard" Style="{StaticResource Brand.Card}" Margin="0,0,0,16">
+                        <StackPanel>
+                            <StackPanel Orientation="Horizontal">
+                                <Border Style="{StaticResource Brand.IconTile}">
+                                    <materialDesign:PackIcon Kind="Update" Width="20" Height="20" HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                                </Border>
+                                <TextBlock Text="軟體更新" Style="{StaticResource Brand.Text.Section}" Margin="12,0,0,0" VerticalAlignment="Center"/>
+                            </StackPanel>
+                            <TextBlock x:Name="CurrentVersionText" Style="{StaticResource Brand.Text.Caption}" Margin="0,10,0,0"/>
+                            <TextBlock x:Name="UpdateStatusText" AutomationProperties.AutomationId="UpdateStatusText"
+                                       Style="{StaticResource Brand.Text.Caption}" Margin="0,4,0,0" TextWrapping="Wrap"
+                                       Text="啟動時會自動檢查有沒有新版本。"/>
+                            <ProgressBar x:Name="UpdateProgressBar" Style="{StaticResource Brand.ProgressBar}"
+                                         Margin="0,10,0,0" Maximum="1" Visibility="Collapsed"/>
+                            <WrapPanel Margin="0,12,0,0">
+                                <Button x:Name="InstallUpdateButton" AutomationProperties.AutomationId="InstallUpdateButton"
+                                        Style="{StaticResource Brand.Button.Gradient}" Padding="12,7" Margin="0,0,8,0"
+                                        Visibility="Collapsed" Click="InstallUpdateButton_Click">
+                                    <StackPanel Orientation="Horizontal">
+                                        <materialDesign:PackIcon Kind="Download" Width="16" Height="16" Margin="0,0,6,0" VerticalAlignment="Center"/>
+                                        <TextBlock Text="下載並更新" VerticalAlignment="Center"/>
+                                    </StackPanel>
+                                </Button>
+                                <Button x:Name="CheckUpdateButton" AutomationProperties.AutomationId="CheckUpdateButton"
+                                        Style="{StaticResource Brand.Button.Ghost}" Padding="12,7" Click="CheckUpdateButton_Click">
+                                    <StackPanel Orientation="Horizontal">
+                                        <materialDesign:PackIcon Kind="Refresh" Width="16" Height="16" Margin="0,0,6,0" VerticalAlignment="Center"/>
+                                        <TextBlock Text="檢查更新" VerticalAlignment="Center"/>
+                                    </StackPanel>
+                                </Button>
+                            </WrapPanel>
+                        </StackPanel>
+                    </Border>
+
                     <Border x:Name="DiagnosticsCard" Style="{StaticResource Brand.Card}" Margin="0,0,0,16">
                         <StackPanel>
                             <StackPanel Orientation="Horizontal">
