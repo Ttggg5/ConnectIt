@@ -51,7 +51,11 @@ public class ResumeTransferTests : IDisposable
     {
         var sender = new ConnectionService { LocalDeviceId = "sender", Identity = _senderIdentity };
         _senders.Add(sender);
-        Assert.True(await sender.RequestConnectionAsync(IPAddress.Loopback, port, "Sender", "Receiver"));
+        var log = new System.Collections.Concurrent.ConcurrentQueue<string>();
+        sender.StatusChanged += (_, m) => log.Enqueue("S: " + m);
+        _receiver.StatusChanged += (_, m) => log.Enqueue("R: " + m);
+        var outcome = await sender.RequestConnectionWithOutcomeAsync(IPAddress.Loopback, port, "Sender", "Receiver");
+        Assert.True(outcome == ConnectionRequestOutcome.Accepted, outcome + " | " + string.Join(" | ", log));
         Assert.True(await WaitUntilAsync(() => _receiver.Sessions.Any(s => s.RemoteDeviceId == "sender" && !s.IsClosed)));
         return sender.Sessions.Single();
     }

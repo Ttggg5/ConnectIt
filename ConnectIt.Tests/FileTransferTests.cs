@@ -193,12 +193,27 @@ public class FileTransferTests : IDisposable
         FileTransferEndedEventArgs? firstSenderEnded = null;
         _initiator.FileTransferEnded += (_, e) => firstSenderEnded = e;
 
+        // 本機 loopback 傳 3MB 只要幾毫秒,可能在輪詢看到「傳輸中」之前就傳完了。收到第一個區塊時先卡住接收端的讀取迴圈,
+        // 確保送第二個檔案時第一個一定還在傳(對方讀不動,傳送端也會跟著塞住)。
+        using var firstChunkArrived = new ManualResetEventSlim();
+        using var releaseReceiver = new ManualResetEventSlim();
+        _acceptor.FileTransferProgress += (_, _) =>
+        {
+            if (!firstChunkArrived.IsSet)
+            {
+                firstChunkArrived.Set();
+                releaseReceiver.Wait(WaitTimeout);
+            }
+        };
+
         await _initiator.Sessions.Single().SendFileAsync(firstSourcePath);
 
-        // 等到接收端真的已經在忙(收到 offer 並接受)之後,再嘗試送出第二個檔案。
-        Assert.True(await WaitUntilAsync(() => _acceptor.IsFileTransferActive, WaitTimeout));
+        // 等到接收端真的已經在收(收到 offer、接受,而且開始收到內容)之後,再嘗試送出第二個檔案。
+        Assert.True(await Task.Run(() => firstChunkArrived.Wait(WaitTimeout)));
+        Assert.True(_acceptor.IsFileTransferActive);
 
         await _initiator.Sessions.Single().SendFileAsync(secondSourcePath);
+        releaseReceiver.Set();
 
         Assert.True(await WaitUntilAsync(() => firstSenderEnded != null, WaitTimeout));
         Assert.Equal(FileTransferEndReason.Completed, firstSenderEnded!.Reason);

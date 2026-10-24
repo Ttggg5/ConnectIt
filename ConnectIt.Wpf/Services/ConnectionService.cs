@@ -179,12 +179,17 @@ public sealed class ConnectionService : IDisposable
             if (await IsLegacyPlaintextClientAsync(client, token).ConfigureAwait(false))
             {
                 StatusChanged?.Invoke(this, $"{remoteAddress} 使用的是不支援加密連線的舊版 ConnectIt,已拒絕連線。");
+                // 先把對方的請求讀掉再回覆:接收緩衝區還有沒讀的資料就關閉 socket 的話,Windows 會送出 RST
+                // 而不是正常關閉,對方可能連我們的 reject 都收不到。
+                using var legacyReader = new StreamReader(client.GetStream(), Encoding.UTF8, leaveOpen: true);
+                await ReadLineWithTimeoutAsync(legacyReader, RequestTimeout, token).ConfigureAwait(false);
                 var legacyWriter = new StreamWriter(client.GetStream(), Encoding.UTF8) { AutoFlush = true };
                 await legacyWriter.WriteLineAsync(JsonSerializer.Serialize(new ConnectMessage
                 {
                     Type = "reject",
                     Reason = UpgradeRequiredReason,
                 })).ConfigureAwait(false);
+                client.Client.Shutdown(SocketShutdown.Send);
                 client.Close();
                 return;
             }
