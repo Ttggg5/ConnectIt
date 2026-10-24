@@ -66,7 +66,7 @@ public class ConnectionRequestOutcomeTests : IDisposable
         _acceptor.ConnectionRequested += (_, _) => requestReceived.TrySetResult();
 
         using var cts = new CancellationTokenSource();
-        var requestTask = _initiator.RequestConnectionWithOutcomeAsync(IPAddress.Loopback, port, "Initiator", "Acceptor", cts.Token);
+        var requestTask = _initiator.RequestConnectionWithOutcomeAsync(IPAddress.Loopback, port, "Initiator", "Acceptor", cancellationToken: cts.Token);
 
         await requestReceived.Task.WaitAsync(TimeSpan.FromSeconds(5));
         cts.Cancel();

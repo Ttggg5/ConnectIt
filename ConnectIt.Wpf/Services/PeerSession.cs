@@ -34,6 +34,9 @@ public sealed class PeerSession : IDisposable
     public const int MaxFramePayloadSize = MaxFrameSize - 1;
 
     private readonly TcpClient _client;
+
+    // 交握完成後的 TLS 串流(見 ConnectionService),所有訊框都經過它加密傳送。
+    private readonly Stream _stream;
     private readonly CancellationTokenSource _monitorCts = new();
     private int _closed;
 
@@ -53,9 +56,14 @@ public sealed class PeerSession : IDisposable
     private ActiveTransfer? _activeTransfer;
     private FolderSession? _activeFolderSession;
 
-    internal PeerSession(TcpClient client, string remoteName, IPAddress remoteAddress, ConnectionRole role, string? remoteDeviceId)
+    internal PeerSession(
+        TcpClient client, Stream stream, string remoteName, IPAddress remoteAddress, ConnectionRole role,
+        string? remoteDeviceId, string remoteFingerprint, string pairingCode)
     {
         _client = client;
+        _stream = stream;
+        RemoteFingerprint = remoteFingerprint;
+        PairingCode = pairingCode;
         RemoteName = remoteName;
         RemoteAddress = remoteAddress;
         Role = role;
@@ -73,6 +81,12 @@ public sealed class PeerSession : IDisposable
 
     /// <summary>對方在交握時帶上的穩定裝置識別碼(舊版沒有時為 null)。</summary>
     public string? RemoteDeviceId { get; }
+
+    /// <summary>對方 TLS 憑證的指紋(見 <see cref="DeviceIdentity.Fingerprint"/>),信任裝置靠這個比對。</summary>
+    public string RemoteFingerprint { get; }
+
+    /// <summary>這條連線的 6 位數配對碼(見 <see cref="DeviceIdentity.PairingCode"/>)。</summary>
+    public string PairingCode { get; }
 
     public bool IsClosed => Volatile.Read(ref _closed) != 0;
 
@@ -206,7 +220,7 @@ public sealed class PeerSession : IDisposable
 
         try
         {
-            var stream = client.GetStream();
+            var stream = _stream;
 
             while (!token.IsCancellationRequested)
             {
@@ -281,6 +295,7 @@ public sealed class PeerSession : IDisposable
     {
         _monitorCts.Cancel();
         _client.Close();
+        _stream.Dispose();
     }
 
     public void Dispose()
@@ -301,15 +316,7 @@ public sealed class PeerSession : IDisposable
             return;
         }
 
-        NetworkStream stream;
-        try
-        {
-            stream = _client.GetStream();
-        }
-        catch
-        {
-            return;
-        }
+        var stream = _stream;
 
         // 把 header/type/payload 合併成單一緩衝區一次寫入,避免拆成多個小封包各自等待
         // ACK(TCP Nagle 演算法 + 對方的 delayed ACK 交互作用下,每個小封包都可能多花數十毫秒)。
@@ -348,7 +355,7 @@ public sealed class PeerSession : IDisposable
     public Task SendScreenAudioAsync(ReadOnlyMemory<byte> pcm, CancellationToken token = default) =>
         WriteFrameAsync(FrameType.ScreenAudio, pcm, token);
 
-    private static async Task<(byte Type, byte[] Payload)?> ReadFrameAsync(NetworkStream stream, CancellationToken token)
+    private static async Task<(byte Type, byte[] Payload)?> ReadFrameAsync(Stream stream, CancellationToken token)
     {
         var header = new byte[FrameLengthPrefixSize];
         if (!await ReadExactAsync(stream, header, allowLeadingEof: true, token).ConfigureAwait(false))
@@ -372,7 +379,7 @@ public sealed class PeerSession : IDisposable
     }
 
     /// <summary>把 buffer 填滿為止。<paramref name="allowLeadingEof"/> 為 true 時,若一開始就收到 EOF 會回傳 false 而不是丟例外。</summary>
-    private static async Task<bool> ReadExactAsync(NetworkStream stream, byte[] buffer, bool allowLeadingEof, CancellationToken token)
+    private static async Task<bool> ReadExactAsync(Stream stream, byte[] buffer, bool allowLeadingEof, CancellationToken token)
     {
         var offset = 0;
         while (offset < buffer.Length)

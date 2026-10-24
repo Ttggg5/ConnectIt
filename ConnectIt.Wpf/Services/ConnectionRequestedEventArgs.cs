@@ -14,6 +14,12 @@ public sealed class ConnectionRequestedEventArgs : EventArgs
     /// <summary>對方的穩定裝置識別碼(舊版沒有時為 null)。</summary>
     public string? RequesterDeviceId { get; init; }
 
+    /// <summary>對方 TLS 憑證的指紋,信任清單靠這個比對(不比對名稱,名稱可以被冒用)。</summary>
+    public required string RequesterFingerprint { get; init; }
+
+    /// <summary>這次連線的 6 位數配對碼,兩邊畫面都會顯示,讓使用者核對。</summary>
+    public required string PairingCode { get; init; }
+
     public required Action<bool> Respond { get; init; }
 }
 
@@ -52,4 +58,7 @@ public enum ConnectionRequestOutcome
 
     /// <summary>使用者自己取消了等待。</summary>
     Cancelled,
+
+    /// <summary>連得上但建立不了加密連線,通常是對方使用不支援加密的舊版 ConnectIt。</summary>
+    IncompatibleVersion,
 }

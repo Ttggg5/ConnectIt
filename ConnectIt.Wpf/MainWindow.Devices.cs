@@ -30,7 +30,12 @@ public partial class MainWindow
     private CancellationTokenSource? _searchCts;
     private bool _isFastSearching;
 
-    private void AdvertiseCurrentName() => _discovery.Advertise(MyDeviceName, _connection.Port);
+    /// <summary>用目前的名稱廣播;TXT 另外帶協定版本("v",舊版看到也不影響)與裝置識別碼("id")。</summary>
+    private void AdvertiseCurrentName() => _discovery.Advertise(MyDeviceName, _connection.Port, new Dictionary<string, string>
+    {
+        ["v"] = ConnectionService.ProtocolVersion.ToString(),
+        ["id"] = _deviceSettings.DeviceId,
+    });
 
     // ===================== 裝置名稱(Hero 上的就地編輯) =====================
 
@@ -187,18 +192,35 @@ public partial class MainWindow
     /// 失敗時依原因(被拒絕/沒回應/連不到)顯示具體的說明與建議,而不是只有一句「未接受」。</summary>
     private async Task ConnectWithWaitingDialogAsync(DiscoveredDevice device)
     {
+        if (device.NeedsUpdate)
+        {
+            await ShowIncompatibleVersionDialogAsync(device.DisplayName);
+            return;
+        }
+
         using var cts = new CancellationTokenSource();
         var dialogShown = false;
+        TextBlock? pairingCodeText = null;
 
         if (!DialogHost.IsDialogOpen(RootDialogIdentifier))
         {
-            var dialog = BuildWaitingForAcceptDialog(device.DisplayName, () => cts.Cancel());
+            var (dialog, codeText) = BuildWaitingForAcceptDialog(device.DisplayName, () => cts.Cancel());
+            pairingCodeText = codeText;
             _ = DialogHost.Show(dialog, RootDialogIdentifier);
             dialogShown = true;
         }
 
+        // 加密連線建立後才算得出配對碼(背景執行緒回呼),顯示在等待對話框上讓使用者跟對方畫面核對。
         var outcome = await _connection.RequestConnectionWithOutcomeAsync(
-            device.Address, device.Port, MyDeviceName, device.DisplayName, cts.Token);
+            device.Address, device.Port, MyDeviceName, device.DisplayName,
+            code => Dispatcher.BeginInvoke(() =>
+            {
+                if (pairingCodeText != null)
+                {
+                    pairingCodeText.Text = DeviceIdentity.FormatPairingCode(code);
+                }
+            }),
+            cts.Token);
 
         if (dialogShown && DialogHost.IsDialogOpen(RootDialogIdentifier))
         {
@@ -222,12 +244,19 @@ public partial class MainWindow
             case ConnectionRequestOutcome.Cancelled:
                 MainSnackbar.MessageQueue?.Enqueue("已取消連線請求。");
                 break;
+            case ConnectionRequestOutcome.IncompatibleVersion:
+                await ShowIncompatibleVersionDialogAsync(device.DisplayName);
+                break;
         }
     }
 
+    private Task ShowIncompatibleVersionDialogAsync(string deviceName) =>
+        ShowMessageDialogAsync(PackIconKind.Update, $"「{deviceName}」需要更新",
+            "現在的連線一律加密,對方使用的是不支援加密的舊版 ConnectIt。請把兩台裝置都更新到最新版(設定 → 軟體更新)後再連線。");
+
     private const string RootDialogIdentifier = "RootDialog";
 
-    private FrameworkElement BuildWaitingForAcceptDialog(string deviceName, Action onCancel)
+    private (FrameworkElement Dialog, TextBlock PairingCodeText) BuildWaitingForAcceptDialog(string deviceName, Action onCancel)
     {
         var panel = new StackPanel { Width = 320 };
         panel.Children.Add(new ContentControl
@@ -248,11 +277,13 @@ public partial class MainWindow
         });
         panel.Children.Add(new TextBlock
         {
-            Text = "請在對方的裝置上按下「接受」。",
+            Text = "請確認對方畫面上的配對碼跟這裡一樣,再在對方的裝置上按下「接受」。",
             Style = (Style)FindResource("Brand.Text.Caption"),
+            TextWrapping = TextWrapping.Wrap,
             TextAlignment = TextAlignment.Center,
-            Margin = new Thickness(0, 0, 0, 20),
+            Margin = new Thickness(0, 0, 0, 12),
         });
+        var pairingCodeText = BuildPairingCodeBlock(panel, "建立加密連線中…");
 
         var cancelButton = new Button
         {
@@ -268,7 +299,39 @@ public partial class MainWindow
         };
         panel.Children.Add(cancelButton);
 
-        return WrapInDialogCard(panel);
+        return (WrapInDialogCard(panel), pairingCodeText);
+    }
+
+    /// <summary>對話框裡的「配對碼」區塊(兩邊顯示同一組數字,使用者核對一致才接受),回傳顯示數字的 TextBlock。</summary>
+    private TextBlock BuildPairingCodeBlock(StackPanel panel, string code)
+    {
+        var codeText = new TextBlock
+        {
+            Text = code,
+            FontSize = 30,
+            FontWeight = FontWeights.Bold,
+            FontFamily = new FontFamily("Consolas"),
+            Foreground = (Brush)FindResource("Brand.Brush.Primary"),
+            HorizontalAlignment = HorizontalAlignment.Center,
+        };
+        System.Windows.Automation.AutomationProperties.SetAutomationId(codeText, "PairingCodeText");
+        var box = new StackPanel();
+        box.Children.Add(new TextBlock
+        {
+            Text = "配對碼",
+            Style = (Style)FindResource("Brand.Text.Overline"),
+            HorizontalAlignment = HorizontalAlignment.Center,
+        });
+        box.Children.Add(codeText);
+        panel.Children.Add(new Border
+        {
+            Background = (Brush)FindResource("Brand.Brush.SurfaceVariant"),
+            CornerRadius = new CornerRadius(14),
+            Padding = new Thickness(14, 10, 14, 10),
+            Margin = new Thickness(0, 0, 0, 18),
+            Child = box,
+        });
+        return codeText;
     }
 
     /// <summary>顯示一個只有「知道了」按鈕的說明對話框。已經有其他對話框開著時改用 Snackbar,避免重疊開啟。</summary>
@@ -349,7 +412,7 @@ public partial class MainWindow
         // 用 BeginInvoke 讓它變成一般排隊的 UI 操作,行為就跟一般 Click 事件叫出對話框一樣正常。
         Dispatcher.BeginInvoke(() =>
         {
-            if (_trustedDevices.IsTrusted(e.RequesterName))
+            if (_trustedDevices.IsTrusted(e.RequesterFingerprint))
             {
                 AppendLog($"已自動接受信任裝置「{e.RequesterName}」的連線請求。");
                 e.Respond(true);
@@ -367,7 +430,7 @@ public partial class MainWindow
             // 視窗藏在系統匣時把它叫出來,不然使用者看不到確認對話框。
             ((App)Application.Current).ShowMainWindow();
 
-            var dialogResultTask = ShowConnectionRequestDialog(e.RequesterName, e.RequesterAddress);
+            var dialogResultTask = ShowConnectionRequestDialog(e.RequesterName, e.RequesterAddress, e.PairingCode);
             _ = RespondWhenDialogClosedAsync(dialogResultTask, e, _trustedDevices);
         });
     }
@@ -389,7 +452,7 @@ public partial class MainWindow
 
         if (accepted && trust)
         {
-            trustedDevices.Trust(e.RequesterName);
+            trustedDevices.Trust(e.RequesterFingerprint, e.RequesterName, e.RequesterDeviceId);
         }
 
         e.Respond(accepted);
@@ -397,7 +460,7 @@ public partial class MainWindow
 
     /// <summary>必須在 UI 執行緒上呼叫。同步建立並顯示確認對話框,回傳使用者按下按鈕後才會完成的 Task
     /// (是否接受、是否同時勾選了「信任此裝置」)。</summary>
-    private Task<(bool Accepted, bool Trust)> ShowConnectionRequestDialog(string requesterName, IPAddress address)
+    private Task<(bool Accepted, bool Trust)> ShowConnectionRequestDialog(string requesterName, IPAddress address, string pairingCode)
     {
         var panel = new StackPanel { Width = 340 };
         panel.Children.Add(new Border
@@ -437,6 +500,15 @@ public partial class MainWindow
             Style = (Style)FindResource("Brand.Text.Caption"),
             HorizontalAlignment = HorizontalAlignment.Center,
             Margin = new Thickness(0, 0, 0, 16),
+        });
+        BuildPairingCodeBlock(panel, DeviceIdentity.FormatPairingCode(pairingCode));
+        panel.Children.Add(new TextBlock
+        {
+            Text = "對方畫面上的配對碼跟這裡一樣才接受;不一樣代表可能有人假冒,請拒絕。",
+            Style = (Style)FindResource("Brand.Text.Caption"),
+            TextWrapping = TextWrapping.Wrap,
+            TextAlignment = TextAlignment.Center,
+            Margin = new Thickness(0, -6, 0, 16),
         });
 
         var trustCheckBox = new CheckBox

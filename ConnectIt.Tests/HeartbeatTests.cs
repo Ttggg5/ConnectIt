@@ -1,5 +1,6 @@
 using System.Buffers.Binary;
 using System.Net;
+using System.Net.Security;
 using System.Net.Sockets;
 using System.Text;
 using ConnectIt.Wpf.Services;
@@ -27,8 +28,8 @@ public class HeartbeatTests : IDisposable
         }
     }
 
-    /// <summary>用原始 socket 扮演「另一台裝置」:送出連線請求、等對方接受,之後完全由測試控制要送什麼。</summary>
-    private async Task<(TcpClient Client, NetworkStream Stream)> ConnectRawPeerAsync()
+    /// <summary>用原始 socket(加上 TLS)扮演「另一台裝置」:送出連線請求、等對方接受,之後完全由測試控制要送什麼。</summary>
+    private async Task<(TcpClient Client, Stream Stream)> ConnectRawPeerAsync()
     {
         var port = _service.StartListening();
         _service.ConnectionRequested += (_, e) => e.Respond(true);
@@ -36,7 +37,13 @@ public class HeartbeatTests : IDisposable
         var client = new TcpClient();
         _cleanup.Add(client);
         await client.ConnectAsync(IPAddress.Loopback, port);
-        var stream = client.GetStream();
+        var stream = new SslStream(client.GetStream(), false, (_, _, _, _) => true);
+        _cleanup.Add(stream);
+        await stream.AuthenticateAsClientAsync(new SslClientAuthenticationOptions
+        {
+            TargetHost = "connectit",
+            ClientCertificates = [DeviceIdentity.CreateEphemeral().Certificate],
+        });
 
         var request = Encoding.UTF8.GetBytes("{\"Type\":\"request\",\"DeviceName\":\"RawPeer\"}\n");
         await stream.WriteAsync(request);
@@ -53,7 +60,7 @@ public class HeartbeatTests : IDisposable
         return (client, stream);
     }
 
-    private static async Task SendPingAsync(NetworkStream stream)
+    private static async Task SendPingAsync(Stream stream)
     {
         var payload = Encoding.UTF8.GetBytes("{\"Type\":\"ping\"}");
         var frame = new byte[4 + 1 + payload.Length];

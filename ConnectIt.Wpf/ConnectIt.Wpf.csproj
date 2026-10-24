@@ -32,6 +32,7 @@
     <!-- 螢幕鏡像的聲音:分享端用 WASAPI loopback 擷取系統聲音,觀看端用 WASAPI 低延遲播放。 -->
     <PackageReference Include="NAudio" Version="2.2.1" />
     <PackageReference Include="QRCoder" Version="1.6.0" />
+    <PackageReference Include="System.Security.Cryptography.ProtectedData" Version="10.0.13" />
     <!-- 螢幕鏡像分享端用 DXGI Desktop Duplication 擷取畫面(比 GDI BitBlt 快好幾倍,見 DesktopDuplicationSource.cs)。 -->
     <PackageReference Include="Vortice.Direct3D11" Version="3.8.3" />
   </ItemGroup>

@@ -50,6 +50,7 @@ public partial class MainWindow : Window
         DevicesItemsControl.ItemsSource = _devices;
         ConnectedPeersListBox.ItemsSource = _connectedPeers;
         _connection.LocalDeviceId = _deviceSettings.DeviceId;
+        _connection.Identity = DeviceIdentity.LoadOrCreate(DeviceIdentity.DefaultPath);
         _devices.CollectionChanged += (_, _) => UpdateEmptyState();
         DeviceNameText.Text = MyDeviceName;
         DeviceNameTextBox.Text = MyDeviceName;

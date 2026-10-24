@@ -300,18 +300,18 @@ public partial class MainWindow
 
     private void RefreshTrustedDevicesList()
     {
-        TrustedDevicesItemsControl.ItemsSource = _trustedDevices.TrustedDevices.OrderBy(name => name, StringComparer.OrdinalIgnoreCase).ToList();
+        TrustedDevicesItemsControl.ItemsSource = _trustedDevices.TrustedDevices.OrderBy(device => device.Name, StringComparer.OrdinalIgnoreCase).ToList();
         TrustedDevicesEmptyText.Visibility = _trustedDevices.TrustedDevices.Count == 0 ? Visibility.Visible : Visibility.Collapsed;
     }
 
     private void UntrustDeviceButton_Click(object sender, RoutedEventArgs e)
     {
-        if (sender is not Button { Tag: string name })
+        if (sender is not Button { Tag: TrustedDevice device })
         {
             return;
         }
 
-        _trustedDevices.Untrust(name);
+        _trustedDevices.Untrust(device.Fingerprint);
         RefreshTrustedDevicesList();
     }
 

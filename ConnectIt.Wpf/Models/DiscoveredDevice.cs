@@ -25,6 +25,15 @@ public class DiscoveredDevice
     /// </summary>
     public string? FriendlyName { get; init; }
 
+    /// <summary>TXT 記錄的 "id":對方的穩定裝置識別碼(舊版沒有)。</summary>
+    public string? DeviceId { get; init; }
+
+    /// <summary>TXT 記錄的 "v":對方支援的協定版本。null = 還沒收到 TXT(不知道);1 = 不支援加密連線的舊版。</summary>
+    public int? ProtocolVersion { get; init; }
+
+    /// <summary>確定對方是舊版(不支援加密連線),連不上,要請對方更新。</summary>
+    public bool NeedsUpdate => ProtocolVersion < ConnectIt.Wpf.Services.ConnectionService.ProtocolVersion;
+
     /// <summary>用來在清單中比對/去重的唯一鍵。</summary>
     public string Key => InstanceName;
 

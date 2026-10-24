@@ -219,6 +219,13 @@
                                                         <TextBlock Text="連線" VerticalAlignment="Center"/>
                                                     </StackPanel>
                                                 </Button>
+                                                <Border x:Name="NeedsUpdatePill" Style="{StaticResource Brand.Pill}" Visibility="Collapsed"
+                                                        ToolTip="對方使用的是不支援加密連線的舊版 ConnectIt,請對方更新到最新版。">
+                                                    <StackPanel Orientation="Horizontal">
+                                                        <materialDesign:PackIcon Kind="Update" Width="14" Height="14" VerticalAlignment="Center"/>
+                                                        <TextBlock Text="需要更新" Margin="6,0,0,0" VerticalAlignment="Center"/>
+                                                    </StackPanel>
+                                                </Border>
                                                 <Border x:Name="ConnectedPill" Style="{StaticResource Brand.Pill.Success}" Visibility="Collapsed">
                                                     <StackPanel Orientation="Horizontal">
                                                         <materialDesign:PackIcon Kind="CheckCircle" Width="14" Height="14" VerticalAlignment="Center"/>
@@ -229,6 +236,11 @@
                                         </Grid>
                                     </Border>
                                     <DataTemplate.Triggers>
+                                        <!-- 對方是不支援加密連線的舊版:連不上,按鈕換成「需要更新」標籤。 -->
+                                        <DataTrigger Binding="{Binding NeedsUpdate}" Value="True">
+                                            <Setter TargetName="ConnectButton" Property="Visibility" Value="Collapsed"/>
+                                            <Setter TargetName="NeedsUpdatePill" Property="Visibility" Value="Visible"/>
+                                        </DataTrigger>
                                         <!-- 已經連線的裝置(可以同時連線多台;Tag 是所有連線對象的位址集合):按鈕換成「已連線」標籤。 -->
                                         <DataTrigger Value="True">
                                             <DataTrigger.Binding>
@@ -1296,7 +1308,7 @@
                                 <TextBlock Text="信任的裝置" Style="{StaticResource Brand.Text.Section}" Margin="12,0,0,0" VerticalAlignment="Center"/>
                             </StackPanel>
                             <TextBlock Style="{StaticResource Brand.Text.Caption}" Margin="0,10,0,10"
-                                       Text="信任的裝置送出連線請求時會自動接受,不再跳出確認視窗。"/>
+                                       Text="信任的裝置送出連線請求時會自動接受,不再跳出確認視窗。只認裝置本身的加密金鑰,改名或冒名都不會被自動接受;舊版的信任紀錄需要重新配對一次。"/>
                             <TextBlock x:Name="TrustedDevicesEmptyText" Style="{StaticResource Brand.Text.Caption}" FontStyle="Italic"
                                        Text="目前沒有信任的裝置。收到連線請求時勾選「信任此裝置」即可加入。"/>
                             <ItemsControl x:Name="TrustedDevicesItemsControl">
@@ -1311,7 +1323,7 @@
                                                 </Grid.ColumnDefinitions>
                                                 <materialDesign:PackIcon Kind="Devices" Width="16" Height="16" VerticalAlignment="Center"
                                                                           Foreground="{DynamicResource Brand.Brush.Primary}"/>
-                                                <TextBlock Grid.Column="1" Text="{Binding}" Margin="10,0" VerticalAlignment="Center" TextTrimming="CharacterEllipsis"/>
+                                                <TextBlock Grid.Column="1" Text="{Binding Name}" Margin="10,0" VerticalAlignment="Center" TextTrimming="CharacterEllipsis"/>
                                                 <Button Grid.Column="2" Tag="{Binding}" Click="UntrustDeviceButton_Click" ToolTip="取消信任"
                                                         Style="{StaticResource Brand.Button.Icon}" Width="30" Height="30">
                                                     <materialDesign:PackIcon Kind="Close" Width="15" Height="15"/>

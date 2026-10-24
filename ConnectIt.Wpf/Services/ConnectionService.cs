@@ -1,14 +1,20 @@
 using System.IO;
 using System.Net;
+using System.Net.Security;
 using System.Net.Sockets;
+using System.Security.Authentication;
+using System.Security.Cryptography.X509Certificates;
 using System.Text;
 using System.Text.Json;
 
 namespace ConnectIt.Wpf.Services;
 
 /// <summary>
-/// 負責 mDNS 找到裝置之後的實際 TCP 連線,包含連線請求/接受/拒絕的交握協定:
-/// 發起端連上後先送出 "request",對方要等使用者確認才會回 "accept"/"reject"。
+/// 負責 mDNS 找到裝置之後的實際 TCP 連線,包含連線請求/接受/拒絕的交握協定。
+/// 協定第 2 版起整條連線都加密:TCP 連上後先做雙向 TLS(接受端是 TLS 伺服器、發起端是用戶端,兩邊都出示
+/// 自己的 <see cref="DeviceIdentity"/> 憑證;憑證是自簽的,握手時不驗證憑證鏈,而是由畫面上的配對碼與
+/// 信任清單裡的指紋確認身分),之後發起端送出 "request",對方要等使用者確認才會回 "accept"/"reject"。
+/// 舊版(明文)的發起端會直接送 JSON,接受端看到第一個 byte 是 '{' 就回明文的 reject(Reason = upgrade-required)。
 /// 交握成功後,每台裝置各有一個 <see cref="PeerSession"/>(同一個 socket 改用訊框協定傳輸檔案、
 /// 螢幕鏡像等),所以可以同時連線多台裝置。各 session 的事件會轉發到這裡(sender 是該 <see cref="PeerSession"/>),
 /// UI 只需要訂閱這個類別。
@@ -26,6 +32,25 @@ public sealed class ConnectionService : IDisposable
 
     /// <summary>單一訊框的資料長度上限(扣掉 1 個型別 byte),螢幕畫面的 JPEG 也必須壓在這之內。</summary>
     public const int MaxFramePayloadSize = PeerSession.MaxFramePayloadSize;
+
+    /// <summary>目前的協定版本:2 = 整條連線走 TLS。mDNS TXT 記錄的 "v" 也是這個值。</summary>
+    public const int ProtocolVersion = 2;
+
+    /// <summary>舊版發起端被拒絕時,reject 訊息的 Reason。</summary>
+    public const string UpgradeRequiredReason = "upgrade-required";
+
+    // TLS 握手的逾時:對方是不支援 TLS 的舊版時,它會把 ClientHello 當成一行文字等(10 秒後放棄),
+    // 這裡要等得比它久,才拿得到「對方關掉連線」而不是自己先逾時。
+    private static readonly TimeSpan TlsHandshakeTimeout = TimeSpan.FromSeconds(15);
+
+    private DeviceIdentity? _identity;
+
+    /// <summary>這台裝置的 TLS 身分(見 <see cref="DeviceIdentity"/>);沒有指定時用只存在記憶體裡的一把(測試用)。</summary>
+    public DeviceIdentity Identity
+    {
+        get => _identity ??= DeviceIdentity.CreateEphemeral();
+        set => _identity = value;
+    }
 
     private TcpListener? _listener;
     private CancellationTokenSource? _acceptCts;
@@ -147,7 +172,42 @@ public sealed class ConnectionService : IDisposable
 
         try
         {
-            var stream = client.GetStream();
+            if (await IsLegacyPlaintextClientAsync(client, token).ConfigureAwait(false))
+            {
+                StatusChanged?.Invoke(this, $"{remoteAddress} 使用的是不支援加密連線的舊版 ConnectIt,已拒絕連線。");
+                var legacyWriter = new StreamWriter(client.GetStream(), Encoding.UTF8) { AutoFlush = true };
+                await legacyWriter.WriteLineAsync(JsonSerializer.Serialize(new ConnectMessage
+                {
+                    Type = "reject",
+                    Reason = UpgradeRequiredReason,
+                })).ConfigureAwait(false);
+                client.Close();
+                return;
+            }
+
+            var stream = new SslStream(client.GetStream(), leaveInnerStreamOpen: false);
+            using (var handshakeCts = CancellationTokenSource.CreateLinkedTokenSource(token))
+            {
+                handshakeCts.CancelAfter(TlsHandshakeTimeout);
+                await stream.AuthenticateAsServerAsync(new SslServerAuthenticationOptions
+                {
+                    ServerCertificate = Identity.Certificate,
+                    ClientCertificateRequired = true,
+                    EnabledSslProtocols = SslProtocols.Tls12 | SslProtocols.Tls13,
+                    RemoteCertificateValidationCallback = AcceptAnyPeerCertificate,
+                }, handshakeCts.Token).ConfigureAwait(false);
+            }
+
+            if (stream.RemoteCertificate is not { } remoteCertificate)
+            {
+                StatusChanged?.Invoke(this, $"{remoteAddress} 沒有出示裝置憑證,已拒絕連線。");
+                client.Close();
+                return;
+            }
+
+            var remoteFingerprint = DeviceIdentity.FingerprintOf(remoteCertificate);
+            var pairingCode = DeviceIdentity.PairingCode(Identity.Fingerprint, remoteFingerprint);
+
             using var reader = new StreamReader(stream, Encoding.UTF8, leaveOpen: true);
             var writer = new StreamWriter(stream, Encoding.UTF8) { AutoFlush = true };
 
@@ -191,6 +251,8 @@ public sealed class ConnectionService : IDisposable
                 RequesterName = requesterName,
                 RequesterAddress = remoteAddress,
                 RequesterDeviceId = request.DeviceId,
+                RequesterFingerprint = remoteFingerprint,
+                PairingCode = pairingCode,
                 Respond = accepted => tcs.TrySetResult(accepted),
             });
 
@@ -200,6 +262,7 @@ public sealed class ConnectionService : IDisposable
             {
                 Type = accepted2 ? "accept" : "reject",
                 DeviceId = LocalDeviceId,
+                ProtocolVersion = ProtocolVersion,
             })).ConfigureAwait(false);
 
             if (!accepted2)
@@ -208,7 +271,8 @@ public sealed class ConnectionService : IDisposable
                 return;
             }
 
-            AddSession(new PeerSession(client, requesterName, remoteAddress, ConnectionRole.Acceptor, request.DeviceId));
+            AddSession(new PeerSession(
+                client, stream, requesterName, remoteAddress, ConnectionRole.Acceptor, request.DeviceId, remoteFingerprint, pairingCode));
         }
         catch (Exception ex)
         {
@@ -222,16 +286,18 @@ public sealed class ConnectionService : IDisposable
     public async Task<bool> RequestConnectionAsync(
         IPAddress address, int port, string myDeviceName, string remoteDisplayName, CancellationToken cancellationToken = default)
     {
-        var outcome = await RequestConnectionWithOutcomeAsync(address, port, myDeviceName, remoteDisplayName, cancellationToken)
+        var outcome = await RequestConnectionWithOutcomeAsync(address, port, myDeviceName, remoteDisplayName, cancellationToken: cancellationToken)
             .ConfigureAwait(false);
         return outcome == ConnectionRequestOutcome.Accepted;
     }
 
     /// <summary>主動連線到指定裝置並送出連線請求,等待對方確認,回傳詳細的結果供 UI 顯示對應的說明。
     /// <paramref name="cancellationToken"/> 取消時(使用者在「等待對方接受」對話框按了取消)回傳
-    /// <see cref="ConnectionRequestOutcome.Cancelled"/>,並關閉這條尚未建立完成的連線。</summary>
+    /// <see cref="ConnectionRequestOutcome.Cancelled"/>,並關閉這條尚未建立完成的連線。
+    /// 加密連線建立後(送出請求前)會先呼叫 <paramref name="onPairingCode"/>,讓「等待對方接受」對話框顯示配對碼。</summary>
     public async Task<ConnectionRequestOutcome> RequestConnectionWithOutcomeAsync(
-        IPAddress address, int port, string myDeviceName, string remoteDisplayName, CancellationToken cancellationToken = default)
+        IPAddress address, int port, string myDeviceName, string remoteDisplayName,
+        Action<string>? onPairingCode = null, CancellationToken cancellationToken = default)
     {
         var client = new TcpClient();
         try
@@ -264,7 +330,43 @@ public sealed class ConnectionService : IDisposable
             }
 
             client.NoDelay = true;
-            var stream = client.GetStream();
+            var stream = new SslStream(client.GetStream(), leaveInnerStreamOpen: false);
+            try
+            {
+                using var handshakeCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+                handshakeCts.CancelAfter(TlsHandshakeTimeout);
+                await stream.AuthenticateAsClientAsync(new SslClientAuthenticationOptions
+                {
+                    // 自簽憑證沒有可驗證的主機名稱,TargetHost 只是 SNI 用的固定字串。
+                    TargetHost = "connectit",
+                    ClientCertificates = [Identity.Certificate],
+                    EnabledSslProtocols = SslProtocols.Tls12 | SslProtocols.Tls13,
+                    RemoteCertificateValidationCallback = AcceptAnyPeerCertificate,
+                }, handshakeCts.Token).ConfigureAwait(false);
+            }
+            catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+            {
+                StatusChanged?.Invoke(this, $"已取消對 {remoteDisplayName} 的連線請求。");
+                client.Close();
+                return ConnectionRequestOutcome.Cancelled;
+            }
+            catch (Exception ex) when (ex is AuthenticationException or IOException or OperationCanceledException)
+            {
+                StatusChanged?.Invoke(this, $"無法和 {remoteDisplayName} 建立加密連線,對方可能使用的是舊版 ConnectIt:{ex.Message}");
+                client.Close();
+                return ConnectionRequestOutcome.IncompatibleVersion;
+            }
+
+            if (stream.RemoteCertificate is not { } remoteCertificate)
+            {
+                client.Close();
+                return ConnectionRequestOutcome.IncompatibleVersion;
+            }
+
+            var remoteFingerprint = DeviceIdentity.FingerprintOf(remoteCertificate);
+            var pairingCode = DeviceIdentity.PairingCode(Identity.Fingerprint, remoteFingerprint);
+            onPairingCode?.Invoke(pairingCode);
+
             using var reader = new StreamReader(stream, Encoding.UTF8, leaveOpen: true);
             var writer = new StreamWriter(stream, Encoding.UTF8) { AutoFlush = true };
 
@@ -275,6 +377,7 @@ public sealed class ConnectionService : IDisposable
                 Type = "request",
                 DeviceName = myDeviceName,
                 DeviceId = LocalDeviceId,
+                ProtocolVersion = ProtocolVersion,
             })).ConfigureAwait(false);
 
             var (timedOut, line) = await ReadLineWithTimeoutAsync(reader, ResponseTimeout, cancellationToken).ConfigureAwait(false);
@@ -290,7 +393,8 @@ public sealed class ConnectionService : IDisposable
 
             if (response is { Type: "accept" })
             {
-                AddSession(new PeerSession(client, remoteDisplayName, address, ConnectionRole.Initiator, response.DeviceId));
+                AddSession(new PeerSession(
+                    client, stream, remoteDisplayName, address, ConnectionRole.Initiator, response.DeviceId, remoteFingerprint, pairingCode));
                 return ConnectionRequestOutcome.Accepted;
             }
 
@@ -305,6 +409,30 @@ public sealed class ConnectionService : IDisposable
             StatusChanged?.Invoke(this, $"連線失敗:{ex.Message}");
             client.Close();
             return cancellationToken.IsCancellationRequested ? ConnectionRequestOutcome.Cancelled : ConnectionRequestOutcome.Unreachable;
+        }
+    }
+
+    /// <summary>憑證是自簽的,握手時一律接受(只要對方有出示憑證);身分由配對碼與信任清單裡的指紋確認。</summary>
+    private static bool AcceptAnyPeerCertificate(object sender, X509Certificate? certificate, X509Chain? chain, SslPolicyErrors errors) =>
+        certificate != null;
+
+    /// <summary>
+    /// 先偷看第一個 byte(不取走):TLS 握手一定是 0x16 開頭,舊版的明文請求則是 JSON 的 '{'。
+    /// 對方連上後一直不送東西就當作不是舊版,交給 TLS 握手自己逾時。
+    /// </summary>
+    private static async Task<bool> IsLegacyPlaintextClientAsync(TcpClient client, CancellationToken token)
+    {
+        using var cts = CancellationTokenSource.CreateLinkedTokenSource(token);
+        cts.CancelAfter(RequestTimeout);
+        var first = new byte[1];
+        try
+        {
+            var read = await client.Client.ReceiveAsync(first, SocketFlags.Peek, cts.Token).ConfigureAwait(false);
+            return read == 1 && first[0] == (byte)'{';
+        }
+        catch (OperationCanceledException) when (!token.IsCancellationRequested)
+        {
+            return false;
         }
     }
 

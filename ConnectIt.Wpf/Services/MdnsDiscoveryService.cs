@@ -72,17 +72,18 @@ public sealed class MdnsDiscoveryService : IDisposable
     // 上一次真正送出廣播時用的友善名稱,搭配 _selfPort/_selfAddresses 判斷這次 Advertise() 呼叫
     // 是不是名稱/連接埠/位址其實都沒變——見 Advertise() 裡的說明。
     private string? _lastAdvertisedFriendlyName;
+    private string? _lastAdvertisedProperties;
 
-    // 等待位址解析的 host -> (instance, port, 顯示用的友善名稱)
-    private readonly ConcurrentDictionary<DomainName, (DomainName Instance, int Port, string? FriendlyName)> _pendingByHost = new();
+    // 等待位址解析的 host -> (instance, port, TXT 屬性)
+    private readonly ConcurrentDictionary<DomainName, (DomainName Instance, int Port, IReadOnlyDictionary<string, string>? Txt)> _pendingByHost = new();
 
     // 每個實體名稱最後一次看到的友善名稱(TXT 記錄的 "name" 屬性)。mDNS 的 SRV/TXT/A 記錄
     // 常常分散在不同的 UDP 封包裡送達(尤其是心跳重送查詢時,對方不一定每次都把 TXT 附在
     // 同一個回應裡),單次 OnAnswerReceived 收到的封包不保證同時帶有 TXT——如果就這樣直接
     // 把「這次沒附 TXT」當成「這台裝置沒有友善名稱」,DisplayName 就會在原始的實體名稱
     // (含隨機短碼,例如 "SM-F9710-f597")跟正確的友善名稱("SM-F9710")之間忽隱忽現地跳動。
-    // 用這份快取記住學到的友善名稱,之後即使某次回應剛好沒附 TXT,也優先沿用先前學到的值。
-    private readonly ConcurrentDictionary<string, string> _knownFriendlyNames = new(StringComparer.OrdinalIgnoreCase);
+    // 用這份快取記住學到的 TXT 屬性(友善名稱、協定版本、裝置識別碼),之後即使某次回應剛好沒附 TXT,也優先沿用先前學到的值。
+    private readonly ConcurrentDictionary<string, IReadOnlyDictionary<string, string>> _knownTxt = new(StringComparer.OrdinalIgnoreCase);
 
     public event EventHandler<DiscoveredDevice>? DeviceDiscovered;
     public event EventHandler<string>? DeviceRemoved;
@@ -123,7 +124,7 @@ public sealed class MdnsDiscoveryService : IDisposable
         {
             if (lastSeen < cutoff && _lastSeenUtc.TryRemove(instanceName, out _))
             {
-                _knownFriendlyNames.TryRemove(instanceName, out _);
+                _knownTxt.TryRemove(instanceName, out _);
                 DeviceRemoved?.Invoke(this, instanceName);
             }
         }
@@ -141,8 +142,11 @@ public sealed class MdnsDiscoveryService : IDisposable
         Log("已重新搜尋裝置...");
     }
 
-    /// <summary>把這台裝置廣播出去,讓其他裝置(含 Android)可以找到並連進來。</summary>
-    public void Advertise(string deviceName, int port)
+    /// <summary>
+    /// 把這台裝置廣播出去,讓其他裝置(含 Android)可以找到並連進來。<paramref name="properties"/> 會一起放進
+    /// TXT 記錄(配對服務放協定版本 "v" 與裝置識別碼 "id",見 MainWindow.AdvertiseCurrentName)。
+    /// </summary>
+    public void Advertise(string deviceName, int port, IReadOnlyDictionary<string, string>? properties = null)
     {
         if (_mdns == null || _sd == null)
         {
@@ -151,6 +155,7 @@ public sealed class MdnsDiscoveryService : IDisposable
 
         var friendlyName = MakeSafeInstanceName(deviceName);
         var addresses = GetRoutableIPv4Addresses();
+        var propertiesKey = properties == null ? string.Empty : string.Join(";", properties.OrderBy(p => p.Key).Select(p => $"{p.Key}={p.Value}"));
 
         // 名稱、連接埠、位址都沒變的話,不需要真的重新廣播一次——重新廣播一定會用新的隨機短碼
         // (見 _instanceSuffix 的說明)產生全新的實體名稱,對方(尤其是 Android NsdManager)
@@ -158,6 +163,7 @@ public sealed class MdnsDiscoveryService : IDisposable
         // 位址記錄),短時間內反而會同時看到新舊兩個實體名稱,變成同一台裝置在清單裡出現兩筆。
         // 「中斷連線後回到搜尋畫面」這種名稱/連接埠其實都沒變的情況,沿用原本的廣播即可。
         if (_selfProfile != null && friendlyName == _lastAdvertisedFriendlyName && port == _selfPort
+            && propertiesKey == _lastAdvertisedProperties
             && addresses.Count == _selfAddresses.Count && addresses.All(_selfAddresses.Contains))
         {
             return;
@@ -170,11 +176,16 @@ public sealed class MdnsDiscoveryService : IDisposable
 
         _instanceSuffix = Guid.NewGuid().ToString("N")[..4];
         _lastAdvertisedFriendlyName = friendlyName;
+        _lastAdvertisedProperties = propertiesKey;
         var instanceName = $"{friendlyName}-{_instanceSuffix}";
         _selfProfile = addresses.Count > 0
             ? new ServiceProfile(instanceName, ServiceType, (ushort)port, addresses)
             : new ServiceProfile(instanceName, ServiceType, (ushort)port);
         _selfProfile.AddProperty("name", friendlyName);
+        foreach (var (key, value) in properties ?? new Dictionary<string, string>())
+        {
+            _selfProfile.AddProperty(key, value);
+        }
         _ownInstanceNames.Add(_selfProfile.FullyQualifiedName.ToString());
 
         // 一定要在呼叫 Advertise() 之前就先更新好「自己」的位址/連接埠:Advertise() 會立刻送出
@@ -243,6 +254,7 @@ public sealed class MdnsDiscoveryService : IDisposable
         _selfAddresses.Clear();
         _selfPort = -1;
         _lastAdvertisedFriendlyName = null;
+        _lastAdvertisedProperties = null;
     }
 
     private static string MakeSafeInstanceName(string name)
@@ -283,7 +295,7 @@ public sealed class MdnsDiscoveryService : IDisposable
     {
         var instanceKey = e.ServiceInstanceName.ToString();
         _lastSeenUtc.TryRemove(instanceKey, out _);
-        _knownFriendlyNames.TryRemove(instanceKey, out _);
+        _knownTxt.TryRemove(instanceKey, out _);
         DeviceRemoved?.Invoke(this, instanceKey);
     }
 
@@ -293,31 +305,32 @@ public sealed class MdnsDiscoveryService : IDisposable
 
         foreach (var srv in records.OfType<SRVRecord>().Where(srv => IsConnectItInstance(srv.Name) && !IsSelf(srv.Name)))
         {
-            var friendlyName = records.OfType<TXTRecord>()
+            var txtStrings = records.OfType<TXTRecord>()
                 .Where(t => t.Name == srv.Name)
                 .SelectMany(t => t.Strings)
-                .Select(ParseTxtFriendlyName)
-                .FirstOrDefault(n => n != null);
+                .ToList();
 
             var instanceKey = srv.Name.ToString();
-            if (friendlyName != null)
+            IReadOnlyDictionary<string, string>? txt = null;
+            if (txtStrings.Count > 0)
             {
-                _knownFriendlyNames[instanceKey] = friendlyName;
+                txt = ParseTxt(txtStrings);
+                _knownTxt[instanceKey] = txt;
             }
             else
             {
-                _knownFriendlyNames.TryGetValue(instanceKey, out friendlyName);
+                _knownTxt.TryGetValue(instanceKey, out txt);
             }
 
             var inlineAddress = records.OfType<AddressRecord>().FirstOrDefault(a => a.Name == srv.Target && IsIPv4(a));
             if (inlineAddress != null)
             {
-                Emit(srv.Name, srv.Target, inlineAddress.Address, srv.Port, friendlyName);
+                Emit(srv.Name, srv.Target, inlineAddress.Address, srv.Port, txt);
                 _pendingByHost.TryRemove(srv.Target, out _);
             }
             else
             {
-                _pendingByHost[srv.Target] = (srv.Name, srv.Port, friendlyName);
+                _pendingByHost[srv.Target] = (srv.Name, srv.Port, txt);
                 _mdns!.SendQuery(srv.Target, type: DnsType.A);
             }
         }
@@ -326,7 +339,7 @@ public sealed class MdnsDiscoveryService : IDisposable
         {
             if (_pendingByHost.TryRemove(addr.Name, out var pending))
             {
-                Emit(pending.Instance, addr.Name, addr.Address, pending.Port, pending.FriendlyName);
+                Emit(pending.Instance, addr.Name, addr.Address, pending.Port, pending.Txt);
             }
         }
     }
@@ -337,18 +350,23 @@ public sealed class MdnsDiscoveryService : IDisposable
     // 不對稱)導致 TcpClient.ConnectAsync 卡住或失敗,卻沒有任何逾時/錯誤訊息可看。
     private static bool IsIPv4(AddressRecord record) => record.Address.AddressFamily == AddressFamily.InterNetwork;
 
-    private static string? ParseTxtFriendlyName(string entry)
+    /// <summary>TXT 記錄的 "key=value" 字串 → 字典(key 不分大小寫)。</summary>
+    internal static IReadOnlyDictionary<string, string> ParseTxt(IEnumerable<string> entries)
     {
-        var idx = entry.IndexOf('=');
-        if (idx < 0)
+        var result = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        foreach (var entry in entries)
         {
-            return null;
+            var idx = entry.IndexOf('=');
+            if (idx > 0)
+            {
+                result[entry[..idx]] = entry[(idx + 1)..];
+            }
         }
 
-        return entry[..idx].Equals("name", StringComparison.OrdinalIgnoreCase) ? entry[(idx + 1)..] : null;
+        return result;
     }
 
-    private void Emit(DomainName instance, DomainName host, IPAddress address, int port, string? friendlyName)
+    private void Emit(DomainName instance, DomainName host, IPAddress address, int port, IReadOnlyDictionary<string, string>? txt)
     {
         // 保險判斷:不管名稱字串比對是否成功,只要「IP + Port」跟自己廣播的一樣,
         // 就一定是自己(不可能有另一台裝置剛好用一樣的位址和連接埠)。
@@ -365,7 +383,10 @@ public sealed class MdnsDiscoveryService : IDisposable
             HostName = host.ToString(),
             Address = address,
             Port = port,
-            FriendlyName = friendlyName,
+            FriendlyName = txt?.GetValueOrDefault("name"),
+            DeviceId = txt?.GetValueOrDefault("id"),
+            // 收到過 TXT 但沒有 "v" 的是不支援加密連線的舊版(第 1 版);還沒收到 TXT 時不知道,先不判斷。
+            ProtocolVersion = txt == null ? null : int.TryParse(txt.GetValueOrDefault("v"), out var version) ? version : 1,
         };
         DeviceDiscovered?.Invoke(this, device);
     }
@@ -400,7 +421,7 @@ public sealed class MdnsDiscoveryService : IDisposable
         }
 
         _pendingByHost.Clear();
-        _knownFriendlyNames.Clear();
+        _knownTxt.Clear();
         _selfProfile = null;
         _selfAddresses.Clear();
         _selfPort = -1;
