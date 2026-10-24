@@ -39,6 +39,7 @@ public partial class MainWindow
 
             NotificationsEnabledCheckBox.IsChecked = ((App)Application.Current).NotificationSettings.NotificationsEnabled;
             AutoStartCheckBox.IsChecked = _startupService.IsEnabled;
+            ExplorerIntegrationCheckBox.IsChecked = _shellIntegration.Enabled;
             PreferredPortTextBox.Text = _connectionSettings.PreferredPort == 0 ? string.Empty : _connectionSettings.PreferredPort.ToString();
             ConnectTimeoutTextBox.Text = _connectionSettings.ConnectTimeoutSeconds.ToString();
             RefreshTrustedDevicesList();
@@ -69,7 +70,7 @@ public partial class MainWindow
     {
         _settingsCards ??=
         [
-            ThemeCard, DownloadFolderCard, NotificationCard, AutoStartCard, TrustedDevicesCard,
+            ThemeCard, DownloadFolderCard, NotificationCard, AutoStartCard, ExplorerIntegrationCard, TrustedDevicesCard,
             VideoServerSettingsCard, AdvancedCard, UpdateCard, DiagnosticsCard,
         ];
 
@@ -296,6 +297,16 @@ public partial class MainWindow
     private void AutoStartCheckBox_Changed(object sender, RoutedEventArgs e)
     {
         _startupService.SetEnabled(AutoStartCheckBox.IsChecked == true);
+    }
+
+    private void ExplorerIntegrationCheckBox_Changed(object sender, RoutedEventArgs e)
+    {
+        if (_isLoadingSettings || Environment.ProcessPath is not { } exePath)
+        {
+            return;
+        }
+
+        _shellIntegration.SetEnabled(ExplorerIntegrationCheckBox.IsChecked == true, exePath);
     }
 
     private void RefreshTrustedDevicesList()

@@ -1321,6 +1321,27 @@
                         </Grid>
                     </Border>
 
+                    <!-- 檔案總管整合(快速傳送) -->
+                    <Border x:Name="ExplorerIntegrationCard" Style="{StaticResource Brand.Card}" Margin="0,0,0,16">
+                        <Grid>
+                            <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
+                            <StackPanel>
+                                <StackPanel Orientation="Horizontal">
+                                    <Border Style="{StaticResource Brand.IconTile}">
+                                        <materialDesign:PackIcon Kind="FolderArrowRight" Width="20" Height="20" HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                                    </Border>
+                                    <TextBlock Text="檔案總管右鍵選單" Style="{StaticResource Brand.Text.Section}" Margin="12,0,0,0" VerticalAlignment="Center"/>
+                                </StackPanel>
+                                <TextBlock Style="{StaticResource Brand.Text.Caption}" Margin="0,10,0,0" TextWrapping="Wrap"
+                                           Text="在檔案或資料夾上按右鍵 →「用 ConnectIt 傳送」(Windows 11 在「顯示更多選項」裡),或用「傳送到」→ ConnectIt,直接選裝置傳出去。"/>
+                            </StackPanel>
+                            <ToggleButton x:Name="ExplorerIntegrationCheckBox" AutomationProperties.AutomationId="ExplorerIntegrationCheckBox"
+                                          Grid.Column="1" Margin="12,0,0,0" VerticalAlignment="Top"
+                                          Style="{StaticResource MaterialDesignSwitchToggleButton}"
+                                          Checked="ExplorerIntegrationCheckBox_Changed" Unchecked="ExplorerIntegrationCheckBox_Changed"/>
+                        </Grid>
+                    </Border>
+
                     <!-- 信任的裝置 -->
                     <Border x:Name="TrustedDevicesCard" Style="{StaticResource Brand.Card}" Margin="0,0,0,16">
                         <StackPanel>

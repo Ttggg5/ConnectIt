@@ -27,6 +27,7 @@ public partial class MainWindow : Window
     private readonly DeviceSettingsService _deviceSettings = new();
     private readonly StartupService _startupService = new();
     private readonly ResumeStore _resumeStore = new();
+    private readonly ShellIntegrationService _shellIntegration = new();
     private readonly ObservableCollection<DiscoveredDevice> _devices = new();
     private readonly ObservableCollection<TransferRecord> _transferHistory = new();
 
@@ -53,6 +54,11 @@ public partial class MainWindow : Window
         _connection.LocalDeviceId = _deviceSettings.DeviceId;
         _connection.Identity = DeviceIdentity.LoadOrCreate(DeviceIdentity.DefaultPath);
         _resumeStore.PurgeExpired();
+        if (Environment.ProcessPath is { } exePath)
+        {
+            _shellIntegration.RefreshIfEnabled(exePath);
+        }
+
         _connection.ResumeStore = _resumeStore;
         _connection.TransferInterrupted += OnTransferInterrupted;
         _devices.CollectionChanged += (_, _) => UpdateEmptyState();

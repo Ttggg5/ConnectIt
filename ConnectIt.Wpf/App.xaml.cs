@@ -19,6 +19,11 @@ public partial class App : Application
     private const string SingleInstanceMutexName = "ConnectIt-SingleInstance-9F2E6B7E-8C1A-4E1D-9D3B-2D6E1F9A7C44";
     private const string ActivateEventName = "ConnectIt-Activate-9F2E6B7E-8C1A-4E1D-9D3B-2D6E1F9A7C44";
 
+    // 「快速傳送」(檔案總管右鍵選單/傳送到)用的具名管道:新啟動的實例把 --send 的路徑交給執行中的實例。
+    private const string SendPipeName = "ConnectIt-Send-9F2E6B7E-8C1A-4E1D-9D3B-2D6E1F9A7C44";
+
+    private SendRequestServer? _sendRequests;
+
     private NotifyIcon? _notifyIcon;
     private Mutex? _singleInstanceMutex;
     private EventWaitHandle? _activateEvent;
@@ -36,9 +41,16 @@ public partial class App : Application
         // 同一台裝置只允許一個執行中的 ConnectIt——每個實例都會各自監聽一個 TCP 連接埠,
         // 開多個實例只會造成裝置探索/連線對到不確定是哪一個埠,而不是真的能同時用。
         // 用具名 Mutex 判斷是不是第一個實例;不是的話就叫醒既有的那個(顯示主視窗)然後直接結束自己。
+        var sendPaths = ShellIntegrationService.ParseSendArgs(e.Args);
         _singleInstanceMutex = new Mutex(true, SingleInstanceMutexName, out var createdNew);
         if (!createdNew)
         {
+            // 快速傳送:把路徑交給執行中的那一個(它會合併同一批、跳出選擇裝置的視窗)。
+            if (sendPaths != null)
+            {
+                SendRequestServer.TrySend(SendPipeName, sendPaths, TimeSpan.FromSeconds(5));
+            }
+
             try
             {
                 using var existingActivateEvent = EventWaitHandle.OpenExisting(ActivateEventName);
@@ -63,9 +75,17 @@ public partial class App : Application
         // (見 StartupService)可以帶入 --minimized 參數,開機時直接留在系統匣,不彈出主視窗。
         var window = new MainWindow();
         MainWindow = window;
-        if (!e.Args.Any(arg => string.Equals(arg, StartupService.MinimizedStartupArg, StringComparison.OrdinalIgnoreCase)))
+        if (sendPaths != null || !e.Args.Any(arg => string.Equals(arg, StartupService.MinimizedStartupArg, StringComparison.OrdinalIgnoreCase)))
         {
             window.Show();
+        }
+
+        _sendRequests = new SendRequestServer(SendPipeName);
+        _sendRequests.BatchReady += (_, paths) => Dispatcher.BeginInvoke(() => window.HandleQuickSend(paths));
+        _sendRequests.Start();
+        if (sendPaths != null)
+        {
+            _sendRequests.Enqueue(sendPaths);
         }
     }
 
@@ -93,11 +113,15 @@ public partial class App : Application
         var showMenuItem = new ToolStripMenuItem("開啟主視窗");
         showMenuItem.Click += (_, _) => ShowMainWindow();
 
+        var sendMenuItem = new ToolStripMenuItem("傳送檔案…");
+        sendMenuItem.Click += (_, _) => (MainWindow as MainWindow)?.HandleQuickSend([]);
+
         var exitMenuItem = new ToolStripMenuItem("結束");
         exitMenuItem.Click += (_, _) => RequestExit();
 
         var contextMenu = new ContextMenuStrip();
         contextMenu.Items.Add(showMenuItem);
+        contextMenu.Items.Add(sendMenuItem);
         contextMenu.Items.Add(new ToolStripSeparator());
         contextMenu.Items.Add(exitMenuItem);
 
@@ -179,6 +203,9 @@ public partial class App : Application
 
         _activateEvent?.Dispose();
         _activateEvent = null;
+
+        _sendRequests?.Dispose();
+        _sendRequests = null;
 
         // 沒拿到 Mutex 的那個「第二實例」路徑不會走到這裡(它在 OnStartup 就直接 Shutdown 了),
         // 所以這裡一定是真正持有 Mutex 的那個實例,可以安全釋放。
