@@ -17,6 +17,10 @@ public class ScreenMirrorTests : IDisposable
     private readonly ScreenMirrorController _acceptorMirror;
     private readonly ScreenMirrorController _initiatorMirror;
 
+    private PeerSession InitiatorSession => _initiator.Sessions.Single();
+
+    private PeerSession AcceptorSession => _acceptor.Sessions.Single();
+
     public ScreenMirrorTests()
     {
         _acceptorMirror = new ScreenMirrorController(_acceptor);
@@ -220,7 +224,7 @@ public class ScreenMirrorTests : IDisposable
         }
 
         await ConnectAsync();
-        _initiatorMirror.RequestViewPeer();
+        _initiatorMirror.RequestViewPeer(InitiatorSession);
         Assert.True(await WaitUntilAsync(() => _acceptorMirror.Status.Phase == ScreenMirrorPhase.IncomingRequest, WaitTimeout));
 
         _acceptorMirror.RespondToIncomingRequest(accept: true, allowControl: false, shareAudio: true);
@@ -237,7 +241,7 @@ public class ScreenMirrorTests : IDisposable
     public async Task SharingWithoutAudio_DoesNotAnnounceAudio()
     {
         await ConnectAsync();
-        _initiatorMirror.RequestViewPeer();
+        _initiatorMirror.RequestViewPeer(InitiatorSession);
         Assert.True(await WaitUntilAsync(() => _acceptorMirror.Status.Phase == ScreenMirrorPhase.IncomingRequest, WaitTimeout));
 
         _acceptorMirror.RespondToIncomingRequest(accept: true, allowControl: false, shareAudio: false);
@@ -254,7 +258,7 @@ public class ScreenMirrorTests : IDisposable
         var notice = new TaskCompletionSource<string>();
         _initiatorMirror.Notice += (_, message) => notice.TrySetResult(message);
 
-        _initiatorMirror.RequestViewPeer();
+        _initiatorMirror.RequestViewPeer(InitiatorSession);
         Assert.Equal(ScreenMirrorPhase.OutgoingRequest, _initiatorMirror.Status.Phase);
         Assert.True(await WaitUntilAsync(() => _acceptorMirror.Status.Phase == ScreenMirrorPhase.IncomingRequest, WaitTimeout));
         Assert.Equal(_initiatorMirror.Status.SessionId, _acceptorMirror.Status.SessionId);
@@ -271,7 +275,7 @@ public class ScreenMirrorTests : IDisposable
     {
         await ConnectAsync();
 
-        _initiatorMirror.RequestViewPeer();
+        _initiatorMirror.RequestViewPeer(InitiatorSession);
         Assert.True(await WaitUntilAsync(() => _acceptorMirror.Status.Phase == ScreenMirrorPhase.IncomingRequest, WaitTimeout));
 
         _acceptorMirror.RespondToIncomingRequest(accept: true, allowControl: true);
@@ -316,7 +320,7 @@ public class ScreenMirrorTests : IDisposable
             frame.Release();
         };
 
-        _initiatorMirror.RequestViewPeer();
+        _initiatorMirror.RequestViewPeer(InitiatorSession);
         Assert.True(await WaitUntilAsync(() => _acceptorMirror.Status.Phase == ScreenMirrorPhase.IncomingRequest, WaitTimeout));
         _acceptorMirror.RespondToIncomingRequest(accept: true, allowControl: false);
 
@@ -333,7 +337,7 @@ public class ScreenMirrorTests : IDisposable
     {
         await ConnectAsync();
 
-        _initiatorMirror.StartShareOffer(allowControl: false);
+        _initiatorMirror.StartShareOffer(InitiatorSession, allowControl: false);
         Assert.Equal(ScreenMirrorPhase.OutgoingOffer, _initiatorMirror.Status.Phase);
         Assert.True(await WaitUntilAsync(() => _acceptorMirror.Status.Phase == ScreenMirrorPhase.IncomingOffer, WaitTimeout));
 
@@ -352,7 +356,7 @@ public class ScreenMirrorTests : IDisposable
         var notice = new TaskCompletionSource<string>();
         _acceptorMirror.Notice += (_, message) => notice.TrySetResult(message);
 
-        _initiatorMirror.RequestViewPeer();
+        _initiatorMirror.RequestViewPeer(InitiatorSession);
         Assert.True(await WaitUntilAsync(() => _acceptorMirror.Status.Phase == ScreenMirrorPhase.IncomingRequest, WaitTimeout));
 
         _initiatorMirror.CancelOutgoing();
@@ -367,12 +371,12 @@ public class ScreenMirrorTests : IDisposable
     {
         await ConnectAsync();
 
-        _initiatorMirror.RequestViewPeer();
+        _initiatorMirror.RequestViewPeer(InitiatorSession);
         Assert.True(await WaitUntilAsync(() => _acceptorMirror.Status.Phase == ScreenMirrorPhase.IncomingRequest, WaitTimeout));
         var firstSession = _acceptorMirror.Status.SessionId;
 
         // 接受端此時也想看對方:自己不是 Idle,控制器本身就不會送出。
-        _acceptorMirror.RequestViewPeer();
+        _acceptorMirror.RequestViewPeer(AcceptorSession);
         Assert.Equal(ScreenMirrorPhase.IncomingRequest, _acceptorMirror.Status.Phase);
         Assert.Equal(firstSession, _acceptorMirror.Status.SessionId);
     }
@@ -382,21 +386,26 @@ public class ScreenMirrorTests : IDisposable
     {
         await ConnectAsync();
 
-        _initiatorMirror.RequestViewPeer();
+        _initiatorMirror.RequestViewPeer(InitiatorSession);
         Assert.True(await WaitUntilAsync(() => _acceptorMirror.Status.Phase == ScreenMirrorPhase.IncomingRequest, WaitTimeout));
 
-        _initiatorMirror.OnConnectionClosed();
-        _acceptorMirror.OnConnectionClosed();
+        _initiatorMirror.OnConnectionClosed(InitiatorSession);
+        _acceptorMirror.OnConnectionClosed(AcceptorSession);
 
         Assert.Equal(ScreenMirrorPhase.Idle, _initiatorMirror.Status.Phase);
         Assert.Equal(ScreenMirrorPhase.Idle, _acceptorMirror.Status.Phase);
     }
 
     [Fact]
-    public void RequestWithoutConnection_DoesNothing()
+    public async Task RequestOnClosedConnection_DoesNothing()
     {
-        _initiatorMirror.RequestViewPeer();
-        _initiatorMirror.StartShareOffer(allowControl: true);
+        await ConnectAsync();
+        var session = InitiatorSession;
+        session.Disconnect();
+        Assert.True(await WaitUntilAsync(() => session.IsClosed, WaitTimeout));
+
+        _initiatorMirror.RequestViewPeer(session);
+        _initiatorMirror.StartShareOffer(session, allowControl: true);
 
         Assert.Equal(ScreenMirrorPhase.Idle, _initiatorMirror.Status.Phase);
     }

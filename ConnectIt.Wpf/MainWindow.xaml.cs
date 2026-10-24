@@ -48,6 +48,8 @@ public partial class MainWindow : Window
         InitializeComponent();
 
         DevicesItemsControl.ItemsSource = _devices;
+        ConnectedPeersListBox.ItemsSource = _connectedPeers;
+        _connection.LocalDeviceId = _deviceSettings.DeviceId;
         _devices.CollectionChanged += (_, _) => UpdateEmptyState();
         DeviceNameText.Text = MyDeviceName;
         DeviceNameTextBox.Text = MyDeviceName;
@@ -63,7 +65,7 @@ public partial class MainWindow : Window
         _connection.StatusChanged += OnServiceStatusChanged;
         _connection.ConnectionRequested += OnConnectionRequested;
         _connection.Connected += OnConnected;
-        _connection.RemoteDisconnected += OnRemoteDisconnected;
+        _connection.SessionClosed += OnSessionClosed;
         _connection.FileOffered += OnFileOffered;
         _connection.FolderOffered += OnFolderOffered;
         _connection.FileTransferProgress += OnFileTransferProgress;

@@ -85,7 +85,7 @@ public class FileTransferTests : IDisposable
         _initiator.FileTransferEnded += (_, e) => senderEnded = e;
         _acceptor.FileTransferEnded += (_, e) => receiverEnded = e;
 
-        await _initiator.SendFileAsync(sourcePath);
+        await _initiator.Sessions.Single().SendFileAsync(sourcePath);
 
         Assert.True(await WaitUntilAsync(() => senderEnded != null && receiverEnded != null, WaitTimeout));
 
@@ -114,7 +114,7 @@ public class FileTransferTests : IDisposable
         _initiator.FileTransferEnded += (_, e) => senderEnded = e;
         _acceptor.FileTransferEnded += (_, e) => receiverEnded = e;
 
-        await _initiator.SendFileAsync(sourcePath);
+        await _initiator.Sessions.Single().SendFileAsync(sourcePath);
 
         Assert.True(await WaitUntilAsync(() => senderEnded != null && receiverEnded != null, WaitTimeout));
         Assert.Equal(FileTransferEndReason.Completed, senderEnded!.Reason);
@@ -136,7 +136,7 @@ public class FileTransferTests : IDisposable
         FileTransferEndedEventArgs? senderEnded = null;
         _initiator.FileTransferEnded += (_, e) => senderEnded = e;
 
-        await _initiator.SendFileAsync(sourcePath);
+        await _initiator.Sessions.Single().SendFileAsync(sourcePath);
 
         Assert.True(await WaitUntilAsync(() => senderEnded != null, WaitTimeout));
         Assert.Equal(FileTransferEndReason.Rejected, senderEnded!.Reason);
@@ -166,11 +166,11 @@ public class FileTransferTests : IDisposable
             if (!cancelled)
             {
                 cancelled = true;
-                _initiator.CancelFileTransfer();
+                _initiator.Sessions.Single().CancelFileTransfer();
             }
         };
 
-        await _initiator.SendFileAsync(sourcePath);
+        await _initiator.Sessions.Single().SendFileAsync(sourcePath);
 
         Assert.True(await WaitUntilAsync(() => senderEnded != null && receiverEnded != null, WaitTimeout));
 
@@ -193,12 +193,12 @@ public class FileTransferTests : IDisposable
         FileTransferEndedEventArgs? firstSenderEnded = null;
         _initiator.FileTransferEnded += (_, e) => firstSenderEnded = e;
 
-        await _initiator.SendFileAsync(firstSourcePath);
+        await _initiator.Sessions.Single().SendFileAsync(firstSourcePath);
 
         // 等到接收端真的已經在忙(收到 offer 並接受)之後,再嘗試送出第二個檔案。
         Assert.True(await WaitUntilAsync(() => _acceptor.IsFileTransferActive, WaitTimeout));
 
-        await _initiator.SendFileAsync(secondSourcePath);
+        await _initiator.Sessions.Single().SendFileAsync(secondSourcePath);
 
         Assert.True(await WaitUntilAsync(() => firstSenderEnded != null, WaitTimeout));
         Assert.Equal(FileTransferEndReason.Completed, firstSenderEnded!.Reason);
@@ -220,7 +220,7 @@ public class FileTransferTests : IDisposable
         FileTransferEndedEventArgs? receiverEnded = null;
         _acceptor.FileTransferEnded += (_, e) => receiverEnded = e;
 
-        await _initiator.SendFileAsync(sourcePath);
+        await _initiator.Sessions.Single().SendFileAsync(sourcePath);
 
         Assert.True(await WaitUntilAsync(() => receiverEnded != null, WaitTimeout));
         Assert.Equal(FileTransferEndReason.Completed, receiverEnded!.Reason);

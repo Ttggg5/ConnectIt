@@ -4,7 +4,7 @@ using System.Text.Json;
 namespace ConnectIt.Wpf.Services;
 
 /// <summary>
-/// 管理「這台裝置」本身的設定:廣播用的裝置名稱,以及是否已經看過首次啟動引導。
+/// 管理「這台裝置」本身的設定:廣播用的裝置名稱、穩定的裝置識別碼,以及是否已經看過首次啟動引導。
 /// 裝置名稱以前只存在主畫面的輸入框裡、每次啟動都退回電腦名稱;首次啟動引導讓使用者取名後,
 /// 名稱要能保留到下次啟動,所以改由這裡儲存。
 /// </summary>
@@ -20,6 +20,12 @@ public sealed class DeviceSettingsService
     /// <summary>首次啟動引導是否已經完成(或被略過)。</summary>
     public bool OnboardingCompleted { get; private set; }
 
+    /// <summary>
+    /// 這台裝置的穩定識別碼(第一次啟動時產生後就固定不變),交握時送給對方、也放在 mDNS TXT 記錄裡。
+    /// 裝置名稱可以改、也可能重複,同一台裝置重新連線時要靠這個認出來。
+    /// </summary>
+    public string DeviceId { get; }
+
     public DeviceSettingsService()
         : this(Path.Combine(AppContext.BaseDirectory, "device-settings.json"))
     {
@@ -32,6 +38,15 @@ public sealed class DeviceSettingsService
         var data = LoadSavedData();
         DeviceName = NormalizeDeviceName(data.DeviceName);
         OnboardingCompleted = data.OnboardingCompleted;
+        if (string.IsNullOrWhiteSpace(data.DeviceId))
+        {
+            DeviceId = Guid.NewGuid().ToString("N");
+            Save();
+        }
+        else
+        {
+            DeviceId = data.DeviceId;
+        }
     }
 
     /// <summary>變更裝置名稱(去頭尾空白、空字串退回電腦名稱、過長截斷),回傳實際套用的名稱。</summary>
@@ -93,6 +108,7 @@ public sealed class DeviceSettingsService
             {
                 DeviceName = DeviceName,
                 OnboardingCompleted = OnboardingCompleted,
+                DeviceId = DeviceId,
             });
             File.WriteAllText(_settingsFilePath, json);
         }
@@ -107,5 +123,7 @@ public sealed class DeviceSettingsService
         public string? DeviceName { get; set; }
 
         public bool OnboardingCompleted { get; set; }
+
+        public string? DeviceId { get; set; }
     }
 }

@@ -93,7 +93,7 @@ public class FolderTransferTests : IDisposable
         _initiator.FolderTransferEnded += (_, e) => senderEnded = e;
         _acceptor.FolderTransferEnded += (_, e) => receiverEnded = e;
 
-        await _initiator.SendFolderAsync(sourceFolder);
+        await _initiator.Sessions.Single().SendFolderAsync(sourceFolder);
 
         Assert.True(await WaitUntilAsync(() => senderEnded != null && receiverEnded != null, WaitTimeout));
 
@@ -125,7 +125,7 @@ public class FolderTransferTests : IDisposable
         FolderTransferEndedEventArgs? senderEnded = null;
         _initiator.FolderTransferEnded += (_, e) => senderEnded = e;
 
-        await _initiator.SendFolderAsync(sourceFolder);
+        await _initiator.Sessions.Single().SendFolderAsync(sourceFolder);
 
         Assert.True(await WaitUntilAsync(() => senderEnded != null, WaitTimeout));
         Assert.Equal(FileTransferEndReason.Rejected, senderEnded!.Reason);
@@ -155,11 +155,11 @@ public class FolderTransferTests : IDisposable
             if (!cancelled)
             {
                 cancelled = true;
-                _initiator.CancelFileTransfer();
+                _initiator.Sessions.Single().CancelFileTransfer();
             }
         };
 
-        await _initiator.SendFolderAsync(sourceFolder);
+        await _initiator.Sessions.Single().SendFolderAsync(sourceFolder);
 
         Assert.True(await WaitUntilAsync(() => senderEnded != null && receiverEnded != null, WaitTimeout));
 
@@ -197,7 +197,7 @@ public class FolderTransferTests : IDisposable
         _initiator.FolderTransferEnded += (_, e) => senderEnded = e;
         _acceptor.FolderTransferEnded += (_, e) => receiverEnded = e;
 
-        await _initiator.SendFilesAsync([firstSource, secondSource]);
+        await _initiator.Sessions.Single().SendFilesAsync([firstSource, secondSource]);
 
         Assert.True(await WaitUntilAsync(() => senderEnded != null && receiverEnded != null, WaitTimeout));
 
@@ -233,7 +233,7 @@ public class FolderTransferTests : IDisposable
         _initiator.FileTransferEnded += (_, e) => fileEnded = e;
         _initiator.FolderTransferEnded += (_, e) => folderEnded = e;
 
-        await _initiator.SendFilesAsync([sourcePath]);
+        await _initiator.Sessions.Single().SendFilesAsync([sourcePath]);
 
         Assert.True(await WaitUntilAsync(() => fileEnded != null, WaitTimeout));
         Assert.Equal(FileTransferEndReason.Completed, fileEnded!.Reason);

@@ -25,7 +25,9 @@
 
     <Window.Resources>
         <conv:StringEqualsMultiConverter x:Key="StringEqualsMulti"/>
+        <conv:ContainedInMultiConverter x:Key="ContainedInMulti"/>
         <conv:IsNotNullConverter x:Key="IsNotNull"/>
+        <conv:IsNotNullToVisibilityConverter x:Key="IsNotNullToVisibility"/>
         <conv:BoolToVisibilityConverter x:Key="BoolToVisibility"/>
     </Window.Resources>
 
@@ -227,15 +229,10 @@
                                         </Grid>
                                     </Border>
                                     <DataTemplate.Triggers>
-                                        <!-- 已經跟別台裝置連線時(一次只能一條連線),其他裝置的「連線」先停用。 -->
-                                        <DataTrigger Binding="{Binding Tag, RelativeSource={RelativeSource AncestorType=ItemsControl}, Converter={StaticResource IsNotNull}}" Value="True">
-                                            <Setter TargetName="ConnectButton" Property="IsEnabled" Value="False"/>
-                                            <Setter TargetName="ConnectButton" Property="ToolTip" Value="請先中斷目前的連線"/>
-                                        </DataTrigger>
-                                        <!-- 目前連線中的那台裝置:按鈕換成「已連線」標籤。 -->
+                                        <!-- 已經連線的裝置(可以同時連線多台;Tag 是所有連線對象的位址集合):按鈕換成「已連線」標籤。 -->
                                         <DataTrigger Value="True">
                                             <DataTrigger.Binding>
-                                                <MultiBinding Converter="{StaticResource StringEqualsMulti}">
+                                                <MultiBinding Converter="{StaticResource ContainedInMulti}">
                                                     <Binding Path="Address"/>
                                                     <Binding Path="Tag" RelativeSource="{RelativeSource AncestorType=ItemsControl}"/>
                                                 </MultiBinding>
@@ -280,7 +277,50 @@
 
                         <!-- 連線對象 -->
                         <StackPanel Grid.Row="0" Margin="20,20,20,0">
-                            <TextBlock Text="目前連線" Style="{StaticResource Brand.Text.Overline}"/>
+                            <TextBlock x:Name="ConnectedOverlineText" Text="目前連線" Style="{StaticResource Brand.Text.Overline}"/>
+                            <!-- 同時連線多台時:切換面板目前顯示哪一台(每台各自的傳輸狀態、鏡像、中斷連線都作用在選取的那台)。 -->
+                            <ListBox x:Name="ConnectedPeersListBox" AutomationProperties.AutomationId="ConnectedPeersListBox"
+                                     Margin="-4,10,-4,0" Visibility="Collapsed" Background="Transparent" BorderThickness="0"
+                                     ScrollViewer.HorizontalScrollBarVisibility="Disabled"
+                                     SelectionChanged="ConnectedPeersListBox_SelectionChanged">
+                                <ListBox.ItemsPanel>
+                                    <ItemsPanelTemplate>
+                                        <WrapPanel/>
+                                    </ItemsPanelTemplate>
+                                </ListBox.ItemsPanel>
+                                <ListBox.ItemContainerStyle>
+                                    <Style TargetType="ListBoxItem">
+                                        <Setter Property="Margin" Value="4"/>
+                                        <Setter Property="Cursor" Value="Hand"/>
+                                        <Setter Property="Template">
+                                            <Setter.Value>
+                                                <ControlTemplate TargetType="ListBoxItem">
+                                                    <Border x:Name="Chip" CornerRadius="14" Padding="12,6" BorderThickness="1"
+                                                            BorderBrush="{DynamicResource Brand.Brush.Outline}"
+                                                            Background="{DynamicResource Brand.Brush.Surface}">
+                                                        <ContentPresenter/>
+                                                    </Border>
+                                                    <ControlTemplate.Triggers>
+                                                        <Trigger Property="IsSelected" Value="True">
+                                                            <Setter TargetName="Chip" Property="Background" Value="{DynamicResource Brand.Brush.PrimarySoft}"/>
+                                                            <Setter TargetName="Chip" Property="BorderBrush" Value="{DynamicResource Brand.Brush.Primary}"/>
+                                                        </Trigger>
+                                                    </ControlTemplate.Triggers>
+                                                </ControlTemplate>
+                                            </Setter.Value>
+                                        </Setter>
+                                    </Style>
+                                </ListBox.ItemContainerStyle>
+                                <ListBox.ItemTemplate>
+                                    <DataTemplate>
+                                        <StackPanel MaxWidth="150">
+                                            <TextBlock Text="{Binding Name}" FontWeight="SemiBold" TextTrimming="CharacterEllipsis"/>
+                                            <TextBlock Text="{Binding ChipStatus}" Style="{StaticResource Brand.Text.Caption}" FontSize="11"
+                                                       Visibility="{Binding ChipStatus, Converter={StaticResource IsNotNullToVisibility}}"/>
+                                        </StackPanel>
+                                    </DataTemplate>
+                                </ListBox.ItemTemplate>
+                            </ListBox>
                             <Grid Margin="0,14,0,0" HorizontalAlignment="Center">
                                 <Grid.ColumnDefinitions>
                                     <ColumnDefinition Width="Auto"/>
@@ -339,6 +379,9 @@
                                         </StackPanel>
                                     </Button>
                                 </UniformGrid>
+                                <CheckBox x:Name="SendToAllCheckBox" AutomationProperties.AutomationId="SendToAllCheckBox"
+                                          Content="同時傳給所有已連線的裝置" HorizontalAlignment="Center" Margin="0,12,0,0"
+                                          Visibility="Collapsed"/>
                             </StackPanel>
                         </Grid>
 
@@ -377,7 +420,8 @@
                                 <StackPanel x:Name="ScreenMirrorSharingPanel" Margin="0,10,0,0" Visibility="Collapsed">
                                     <StackPanel Orientation="Horizontal">
                                         <Ellipse Style="{StaticResource Brand.BreathingDot}" Fill="#EF4444" VerticalAlignment="Center"/>
-                                        <TextBlock Text="正在分享你的螢幕" Margin="8,0,0,0" VerticalAlignment="Center"/>
+                                        <TextBlock x:Name="ScreenMirrorSharingText" Text="正在分享你的螢幕" Margin="8,0,0,0"
+                                                   VerticalAlignment="Center" TextTrimming="CharacterEllipsis"/>
                                     </StackPanel>
                                     <CheckBox x:Name="ShareAudioCheckBox" AutomationProperties.AutomationId="ShareAudioCheckBox"
                                               Content="同時分享這台電腦的聲音" Margin="0,10,0,0"
@@ -395,7 +439,8 @@
                                 </StackPanel>
 
                                 <StackPanel x:Name="ScreenMirrorViewingPanel" Margin="0,10,0,0" Visibility="Collapsed">
-                                    <TextBlock Text="正在觀看對方的螢幕(在另一個視窗)" Style="{StaticResource Brand.Text.Caption}"/>
+                                    <TextBlock x:Name="ScreenMirrorViewingText" Text="正在觀看對方的螢幕(在另一個視窗)"
+                                               Style="{StaticResource Brand.Text.Caption}" TextWrapping="Wrap"/>
                                     <UniformGrid Columns="2" Margin="0,10,0,0">
                                         <Button Style="{StaticResource Brand.Button.Ghost}" Margin="0,0,5,0" Padding="8,8"
                                                 Background="{DynamicResource Brand.Brush.Surface}" Click="ShowScreenViewerButton_Click">
@@ -467,7 +512,7 @@
                         <StackPanel Grid.Row="3" Orientation="Horizontal" Margin="20,18,20,8">
                             <materialDesign:PackIcon Kind="History" Width="16" Height="16" Foreground="{DynamicResource Brand.Brush.TextMuted}"
                                                       VerticalAlignment="Center"/>
-                            <TextBlock Text="這次連線的傳輸紀錄" Style="{StaticResource Brand.Text.Overline}" Margin="6,0,0,0" VerticalAlignment="Center"/>
+                            <TextBlock Text="傳輸紀錄" Style="{StaticResource Brand.Text.Overline}" Margin="6,0,0,0" VerticalAlignment="Center"/>
                         </StackPanel>
                         <Grid Grid.Row="4" Margin="12,0,12,0">
                             <ScrollViewer VerticalScrollBarVisibility="Auto">
@@ -489,8 +534,8 @@
                                                     </Border>
                                                     <StackPanel Grid.Column="1" Margin="10,0" VerticalAlignment="Center">
                                                         <TextBlock Text="{Binding Name}" FontWeight="SemiBold" TextTrimming="CharacterEllipsis"/>
-                                                        <TextBlock Style="{StaticResource Brand.Text.Caption}" FontSize="11">
-                                                            <Run Text="{Binding StatusText, Mode=OneWay}"/><Run Text=" ・ "/><Run Text="{Binding TimeText, Mode=OneWay}"/>
+                                                        <TextBlock Style="{StaticResource Brand.Text.Caption}" FontSize="11" TextTrimming="CharacterEllipsis">
+                                                            <Run Text="{Binding StatusText, Mode=OneWay}"/><Run Text=" ・ "/><Run Text="{Binding PeerName, Mode=OneWay}"/><Run Text=" ・ "/><Run Text="{Binding TimeText, Mode=OneWay}"/>
                                                         </TextBlock>
                                                     </StackPanel>
                                                     <StackPanel Grid.Column="2" Orientation="Horizontal"

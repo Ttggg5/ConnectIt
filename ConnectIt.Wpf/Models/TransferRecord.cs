@@ -3,8 +3,8 @@ using ConnectIt.Wpf.Services;
 namespace ConnectIt.Wpf.Models;
 
 /// <summary>
-/// 這次連線期間的一筆傳輸紀錄(傳送或接收的檔案/資料夾),顯示在連線面板的「傳輸紀錄」清單,
-/// 接收成功的項目可以直接開啟檔案或在檔案總管中顯示。只存在記憶體裡,斷線後清空。
+/// 一筆傳輸紀錄(傳送或接收的檔案/資料夾),顯示在連線面板的「傳輸紀錄」清單,
+/// 接收成功的項目可以直接開啟檔案或在檔案總管中顯示。只存在記憶體裡,關閉 App 後清空。
 /// </summary>
 public sealed class TransferRecord
 {
@@ -20,6 +20,9 @@ public sealed class TransferRecord
 
     /// <summary>true 代表 <see cref="SavedPath"/> 是資料夾(資料夾/多檔案傳輸),false 代表單一檔案。</summary>
     public bool IsFolder { get; init; }
+
+    /// <summary>傳給誰/從誰收到(可以同時連線多台,紀錄裡要分得出是哪一台)。</summary>
+    public string PeerName { get; init; } = string.Empty;
 
     public DateTime Time { get; init; } = DateTime.Now;
 

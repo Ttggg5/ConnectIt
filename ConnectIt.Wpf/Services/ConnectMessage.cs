@@ -6,4 +6,7 @@ public sealed class ConnectMessage
     public required string Type { get; init; } // "request" | "accept" | "reject"
 
     public string? DeviceName { get; init; }
+
+    /// <summary>送出方的穩定裝置識別碼(request 與 accept 都會帶),同一台裝置重新連線時用來取代舊連線。</summary>
+    public string? DeviceId { get; init; }
 }

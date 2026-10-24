@@ -1,3 +1,4 @@
+using System.Collections.ObjectModel;
 using System.Net;
 using System.Windows;
 using System.Windows.Controls;
@@ -28,9 +29,6 @@ public partial class MainWindow
 
     private CancellationTokenSource? _searchCts;
     private bool _isFastSearching;
-
-    /// <summary>目前連線對象的位址(正規化成 IPv4 字串),同時存在 DevicesItemsControl.Tag 供卡片顯示「已連線」。</summary>
-    private string? _connectedAddress;
 
     private void AdvertiseCurrentName() => _discovery.Advertise(MyDeviceName, _connection.Port);
 
@@ -489,17 +487,23 @@ public partial class MainWindow
     }
 
     // ===================== 連線狀態 =====================
+    //
+    // 可以同時連線多台裝置:_connectedPeers 是所有已連線的裝置,「目前連線」面板一次顯示其中一台
+    // (_selectedPeer,由面板頂端的裝置切換列選擇),傳送檔案、螢幕鏡像、中斷連線都作用在選取的那台。
+
+    private readonly ObservableCollection<ConnectedPeerItem> _connectedPeers = new();
+    private ConnectedPeerItem? _selectedPeer;
+
+    private ConnectedPeerItem? FindPeerItem(object? session) => _connectedPeers.FirstOrDefault(p => p.Session == session);
 
     private void OnConnected(object? sender, ConnectedEventArgs e)
     {
         Dispatcher.Invoke(() =>
         {
-            _connectedAddress = NormalizeAddress(e.RemoteAddress);
-            DevicesItemsControl.Tag = _connectedAddress;
-            ConnectedDeviceNameText.Text = e.RemoteName;
-            ConnectedDeviceAddressText.Text = _connectedAddress;
-            _transferHistory.Clear();
-            HideFileTransferPanel();
+            var item = new ConnectedPeerItem(e.Session, NormalizeAddress(e.RemoteAddress));
+            _connectedPeers.Add(item);
+            RefreshConnectedAddresses();
+            SelectPeer(item);
 
             NavListBox.SelectedIndex = 0;
             SetActivePage(AppPage.Devices);
@@ -509,48 +513,108 @@ public partial class MainWindow
         });
     }
 
+    /// <summary>裝置卡片的「已連線」標籤:ItemsControl.Tag 放所有連線對象的位址(見 ContainedInMultiConverter)。</summary>
+    private void RefreshConnectedAddresses() =>
+        DevicesItemsControl.Tag = _connectedPeers.Count == 0 ? null : new HashSet<string>(_connectedPeers.Select(p => p.Address));
+
+    private void SelectPeer(ConnectedPeerItem? item)
+    {
+        _selectedPeer = item;
+        if (!Equals(ConnectedPeersListBox.SelectedItem, item))
+        {
+            ConnectedPeersListBox.SelectedItem = item;
+        }
+
+        RenderConnectedPanel();
+    }
+
+    private void ConnectedPeersListBox_SelectionChanged(object sender, SelectionChangedEventArgs e)
+    {
+        if (ConnectedPeersListBox.SelectedItem is ConnectedPeerItem item && item != _selectedPeer)
+        {
+            SelectPeer(item);
+        }
+    }
+
+    /// <summary>依選取的裝置更新面板的名稱、位址、裝置切換列與傳輸卡片。</summary>
+    private void RenderConnectedPanel()
+    {
+        UpdateConnectedPanel();
+        var multiple = _connectedPeers.Count > 1;
+        ConnectedOverlineText.Text = multiple ? $"目前連線({_connectedPeers.Count} 台)" : "目前連線";
+        ConnectedPeersListBox.Visibility = multiple ? Visibility.Visible : Visibility.Collapsed;
+        SendToAllCheckBox.Visibility = multiple ? Visibility.Visible : Visibility.Collapsed;
+        if (!multiple)
+        {
+            SendToAllCheckBox.IsChecked = false;
+        }
+
+        ConnectedDeviceNameText.Text = _selectedPeer?.Name ?? string.Empty;
+        ConnectedDeviceAddressText.Text = _selectedPeer?.Address ?? string.Empty;
+        RenderTransferCard();
+        ApplyScreenMirrorStatus(ScreenMirror.Status);
+    }
+
     /// <summary>依目前是否已連線,顯示/收起裝置頁右側的「目前連線」面板。</summary>
     private void UpdateConnectedPanel()
     {
-        var connected = _connection.IsConnected;
+        var connected = _connectedPeers.Count > 0;
         ConnectedViewRoot.Visibility = connected ? Visibility.Visible : Visibility.Collapsed;
         ConnectedPanelColumn.Width = connected ? new GridLength(400) : new GridLength(0);
     }
 
     private void DisconnectButton_Click(object sender, RoutedEventArgs e)
     {
-        _connection.Disconnect();
-        OnConnectionEnded("已中斷連線。");
+        // 之後的畫面更新由 SessionClosed 事件(OnSessionClosed)統一處理。
+        _selectedPeer?.Session.Disconnect();
     }
 
-    private void OnRemoteDisconnected(object? sender, EventArgs e)
+    private void OnSessionClosed(object? sender, SessionClosedEventArgs e)
     {
         Dispatcher.Invoke(() =>
         {
-            var peerName = ConnectedDeviceNameText.Text;
-            MainSnackbar.MessageQueue?.Enqueue($"{peerName} 已中斷連線。");
-            OnConnectionEnded("對方已中斷連線。");
-            // NotifyIcon.ShowBalloonTip 在 tipText 為空字串時會丟 ArgumentException——這裡是從
-            // ConnectionService 背景執行緒觸發的事件,例外被吃掉不會有任何錯誤訊息,氣泡也就永遠不會顯示,
-            // 所以訊息一定要給非空字串。
-            ((App)Application.Current).ShowConnectionAlert("連線已中斷", $"{peerName} 已中斷連線。");
+            OnScreenMirrorConnectionEnded(e.Session);
+            var item = FindPeerItem(e.Session);
+            if (item == null)
+            {
+                return;
+            }
+
+            var peerName = item.Name;
+            _connectedPeers.Remove(item);
+            RefreshConnectedAddresses();
+            if (!_connectedPeers.Any(p => p.TransferInProgress))
+            {
+                ClearTransferProgressIndicators();
+            }
+
+            if (e.ByRemote)
+            {
+                MainSnackbar.MessageQueue?.Enqueue($"{peerName} 已中斷連線。");
+                // NotifyIcon.ShowBalloonTip 在 tipText 為空字串時會丟 ArgumentException——這裡是從
+                // ConnectionService 背景執行緒觸發的事件,例外被吃掉不會有任何錯誤訊息,氣泡也就永遠不會顯示,
+                // 所以訊息一定要給非空字串。
+                ((App)Application.Current).ShowConnectionAlert("連線已中斷", $"{peerName} 已中斷連線。");
+            }
+
+            AppendLog(e.ByRemote ? $"{peerName} 已中斷連線。" : $"已中斷與 {peerName} 的連線。");
+
+            if (_selectedPeer == item)
+            {
+                SelectPeer(_connectedPeers.FirstOrDefault());
+            }
+            else
+            {
+                RenderConnectedPanel();
+            }
+
+            if (_connectedPeers.Count == 0)
+            {
+                // 所有連線都結束了:用目前的名稱重新廣播,並重新快速搜尋一輪。
+                AdvertiseCurrentName();
+                StartSearchCycle();
+            }
         });
-    }
-
-    /// <summary>不管是自己按了中斷連線,還是對方把連線關掉:收起連線面板(裝置清單一直都在),
-    /// 用目前的名稱重新廣播,並重新快速搜尋一輪。</summary>
-    private void OnConnectionEnded(string logMessage)
-    {
-        OnScreenMirrorConnectionEnded();
-        _connectedAddress = null;
-        DevicesItemsControl.Tag = null;
-        HideFileTransferPanel();
-        UpdateConnectedPanel();
-
-        AdvertiseCurrentName();
-        StartSearchCycle();
-
-        AppendLog(logMessage);
     }
 
     private static string NormalizeAddress(IPAddress address) =>

@@ -11,6 +11,9 @@ public sealed class ConnectionRequestedEventArgs : EventArgs
 
     public required IPAddress RequesterAddress { get; init; }
 
+    /// <summary>對方的穩定裝置識別碼(舊版沒有時為 null)。</summary>
+    public string? RequesterDeviceId { get; init; }
+
     public required Action<bool> Respond { get; init; }
 }
 
@@ -23,6 +26,8 @@ public enum ConnectionRole
 /// <summary>雙方交握完成、正式建立連線時觸發。</summary>
 public sealed class ConnectedEventArgs : EventArgs
 {
+    public required PeerSession Session { get; init; }
+
     public required string RemoteName { get; init; }
 
     public required IPAddress RemoteAddress { get; init; }

@@ -45,7 +45,16 @@ public partial class MainWindow
         };
     }
 
-    private void ViewPeerScreenButton_Click(object sender, RoutedEventArgs e) => ScreenMirror.RequestViewPeer();
+    /// <summary>螢幕鏡像同一時間只跟一台裝置進行;對話框、視窗標題顯示的是鏡像對象的名稱。</summary>
+    private string ScreenMirrorPeerName => ScreenMirror.Peer?.RemoteName is { Length: > 0 } name ? name : "對方";
+
+    private void ViewPeerScreenButton_Click(object sender, RoutedEventArgs e)
+    {
+        if (_selectedPeer is { } peer)
+        {
+            ScreenMirror.RequestViewPeer(peer.Session);
+        }
+    }
 
     private async void ShareMyScreenButton_Click(object sender, RoutedEventArgs e)
     {
@@ -54,10 +63,15 @@ public partial class MainWindow
             return;
         }
 
+        if (_selectedPeer is not { } peer)
+        {
+            return;
+        }
+
         var (confirmed, allowControl, shareAudio) = await ShowShareScreenDialogAsync();
         if (confirmed)
         {
-            ScreenMirror.StartShareOffer(allowControl, shareAudio);
+            ScreenMirror.StartShareOffer(peer.Session, allowControl, shareAudio);
         }
     }
 
@@ -96,8 +110,8 @@ public partial class MainWindow
         ScreenMirror.SetShareAudio(ShareAudioCheckBox.IsChecked == true);
     }
 
-    /// <summary>連線結束(不論哪一方)時呼叫。</summary>
-    private void OnScreenMirrorConnectionEnded() => _screenMirror?.OnConnectionClosed();
+    /// <summary>某一條連線結束(不論哪一方)時呼叫;是鏡像中的那台才會結束螢幕鏡像。</summary>
+    private void OnScreenMirrorConnectionEnded(PeerSession session) => _screenMirror?.OnConnectionClosed(session);
 
     /// <summary>UI 執行緒上呼叫:依最新狀態更新面板、對話框、觀看視窗與系統匣提示。</summary>
     private void ApplyScreenMirrorStatus(ScreenMirrorStatus status)
@@ -111,6 +125,8 @@ public partial class MainWindow
         ScreenMirrorIdlePanel.IsEnabled = status.Phase == ScreenMirrorPhase.Idle;
         ScreenMirrorSharingPanel.Visibility = status.Phase == ScreenMirrorPhase.Sharing ? Visibility.Visible : Visibility.Collapsed;
         ScreenMirrorViewingPanel.Visibility = status.Phase == ScreenMirrorPhase.Viewing ? Visibility.Visible : Visibility.Collapsed;
+        ScreenMirrorSharingText.Text = $"正在分享你的螢幕給 {ScreenMirrorPeerName}";
+        ScreenMirrorViewingText.Text = $"正在觀看 {ScreenMirrorPeerName} 的螢幕(在另一個視窗)";
         if (status.Phase == ScreenMirrorPhase.Sharing)
         {
             _suppressAllowControlEvent = true;
@@ -130,7 +146,7 @@ public partial class MainWindow
 
     private void OnScreenMirrorPhaseEntered(ScreenMirrorStatus status)
     {
-        var peerName = string.IsNullOrEmpty(ConnectedDeviceNameText.Text) ? "對方" : ConnectedDeviceNameText.Text;
+        var peerName = ScreenMirrorPeerName;
         switch (status.Phase)
         {
             case ScreenMirrorPhase.OutgoingRequest:
@@ -170,8 +186,7 @@ public partial class MainWindow
         {
             if (_screenViewerWindow == null)
             {
-                var peerName = string.IsNullOrEmpty(ConnectedDeviceNameText.Text) ? "對方" : ConnectedDeviceNameText.Text;
-                var window = new ScreenViewerWindow(ScreenMirror, peerName, status);
+                var window = new ScreenViewerWindow(ScreenMirror, ScreenMirrorPeerName, status);
                 window.Closed += (_, _) =>
                 {
                     if (_screenViewerWindow == window)

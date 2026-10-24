@@ -9,6 +9,8 @@ using Microsoft.Win32;
 
 namespace ConnectIt.Wpf;
 
+// 檔案/資料夾傳輸的畫面。可以同時連線多台裝置,每台各自一個傳輸(ConnectedPeerItem 記住各自的傳輸卡片狀態),
+// 傳輸卡片只顯示選取中的那台;勾選「同時傳給所有已連線的裝置」時,同一批檔案會分別送給每一台。
 public partial class MainWindow
 {
     private async void SendFileButton_Click(object sender, RoutedEventArgs e)
@@ -29,9 +31,16 @@ public partial class MainWindow
         }
     }
 
+    /// <summary>這次要傳給哪些裝置:勾選「同時傳給所有已連線的裝置」時是全部,否則是選取中的那台。</summary>
+    private IReadOnlyList<ConnectedPeerItem> SendTargets() =>
+        SendToAllCheckBox.IsChecked == true && _connectedPeers.Count > 1
+            ? _connectedPeers.ToArray()
+            : _selectedPeer is { } selected ? [selected] : [];
+
     private void ConnectedViewRoot_DragEnter(object sender, DragEventArgs e)
     {
-        if (_connection.IsFileTransferActive || !e.Data.GetDataPresent(DataFormats.FileDrop))
+        var targets = SendTargets();
+        if (targets.Count == 0 || targets.All(t => t.Session.IsFileTransferActive) || !e.Data.GetDataPresent(DataFormats.FileDrop))
         {
             e.Effects = DragDropEffects.None;
             DropOverlay.Visibility = Visibility.Collapsed;
@@ -39,7 +48,7 @@ public partial class MainWindow
         }
 
         e.Effects = DragDropEffects.Copy;
-        DropOverlayText.Text = $"放開以傳送給 {ConnectedDeviceNameText.Text}";
+        DropOverlayText.Text = targets.Count > 1 ? $"放開以傳送給 {targets.Count} 台裝置" : $"放開以傳送給 {targets[0].Name}";
         DropOverlay.Visibility = Visibility.Visible;
     }
 
@@ -72,128 +81,177 @@ public partial class MainWindow
         }
     }
 
-    private async Task StartSendFilesAsync(IReadOnlyList<string> filePaths)
+    /// <summary>傳給 <see cref="SendTargets"/> 裡每一台(或指定的 <paramref name="targets"/>);正在傳輸中的裝置會被略過。</summary>
+    private async Task StartSendFilesAsync(IReadOnlyList<string> filePaths, IReadOnlyList<ConnectedPeerItem>? targets = null)
     {
         if (filePaths.Count == 0)
         {
             return;
         }
 
-        if (_connection.IsFileTransferActive)
+        var displayName = filePaths.Count == 1 ? Path.GetFileName(filePaths[0]) : $"{filePaths.Count} 個檔案";
+        foreach (var target in ReadyTargets(targets ?? SendTargets()))
         {
-            MainSnackbar.MessageQueue?.Enqueue("目前已有檔案傳輸正在進行,請稍後再試。");
-            return;
+            ShowFileTransferPanel(target, displayName, "等待對方接受...");
+            await target.Session.SendFilesAsync(filePaths);
         }
-
-        if (filePaths.Count == 1)
-        {
-            ShowFileTransferPanel(Path.GetFileName(filePaths[0]), "等待對方接受...");
-            await _connection.SendFileAsync(filePaths[0]);
-            return;
-        }
-
-        ShowFileTransferPanel($"{filePaths.Count} 個檔案", "等待對方接受...");
-        await _connection.SendFilesAsync(filePaths);
     }
 
-    private async Task StartSendFolderAsync(string folderPath)
+    private async Task StartSendFolderAsync(string folderPath, IReadOnlyList<ConnectedPeerItem>? targets = null)
     {
-        if (_connection.IsFileTransferActive)
+        var displayName = Path.GetFileName(folderPath.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar));
+        foreach (var target in ReadyTargets(targets ?? SendTargets()))
         {
-            MainSnackbar.MessageQueue?.Enqueue("目前已有檔案傳輸正在進行,請稍後再試。");
-            return;
+            ShowFileTransferPanel(target, displayName, "等待對方接受...");
+            await target.Session.SendFolderAsync(folderPath);
+        }
+    }
+
+    /// <summary>過濾掉正在傳輸中的裝置(每條連線同一時間只能有一個傳輸),並告訴使用者哪些被略過了。</summary>
+    private List<ConnectedPeerItem> ReadyTargets(IReadOnlyList<ConnectedPeerItem> targets)
+    {
+        var busy = targets.Where(t => t.Session.IsFileTransferActive).ToList();
+        if (busy.Count > 0)
+        {
+            MainSnackbar.MessageQueue?.Enqueue(targets.Count == 1
+                ? "目前已有檔案傳輸正在進行,請稍後再試。"
+                : $"{string.Join("、", busy.Select(b => b.Name))} 正在傳輸中,這次先略過。");
         }
 
-        ShowFileTransferPanel(Path.GetFileName(folderPath.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar)), "等待對方接受...");
-        await _connection.SendFolderAsync(folderPath);
+        return targets.Except(busy).ToList();
     }
 
     private void CancelFileTransferButton_Click(object sender, RoutedEventArgs e)
     {
-        _connection.CancelFileTransfer();
+        _selectedPeer?.Session.CancelFileTransfer();
     }
 
-    // 計算目前的百分比、速度與預計剩餘時間(見 TransferRateTracker)。
-    private readonly TransferRateTracker _transferRate = new();
-
-    private void ShowFileTransferPanel(string fileName, string status)
+    private void ShowFileTransferPanel(ConnectedPeerItem peer, string fileName, string status)
     {
-        _lastReceivedRecord = null;
-        _transferRate.Reset();
-        FileTransferPercentText.Text = string.Empty;
+        peer.LastReceivedRecord = null;
+        peer.Rate.Reset();
+        peer.TransferVisible = true;
+        peer.TransferInProgress = true;
+        peer.TransferName = fileName;
+        peer.TransferStatus = status;
+        peer.TransferPercent = 0;
+        peer.TransferPercentText = string.Empty;
+        peer.ChipStatus = "準備傳輸";
+
         TaskbarInfo.ProgressState = System.Windows.Shell.TaskbarItemProgressState.Indeterminate;
         ((App)Application.Current).SetTrayStatus($"準備傳輸「{fileName}」");
-        FileTransferNameText.Text = fileName;
-        FileTransferIcon.Kind = PackIconKind.SwapVertical;
-        FileTransferProgressBar.Value = 0;
-        FileTransferProgressBar.Visibility = Visibility.Visible;
-        FileTransferStatusText.Text = status;
-        FileTransferDoneActions.Visibility = Visibility.Collapsed;
-        CancelFileTransferButton.Visibility = Visibility.Visible;
-        DismissFileTransferButton.Visibility = Visibility.Collapsed;
+        RenderTransferCardIfSelected(peer);
+    }
+
+    private void HideFileTransferPanel(ConnectedPeerItem peer)
+    {
+        peer.LastReceivedRecord = null;
+        peer.TransferVisible = false;
+        peer.TransferInProgress = false;
+        peer.ChipStatus = null;
+        RenderTransferCardIfSelected(peer);
+    }
+
+    private void RenderTransferCardIfSelected(ConnectedPeerItem peer)
+    {
+        if (peer == _selectedPeer)
+        {
+            RenderTransferCard();
+        }
+    }
+
+    /// <summary>把選取中裝置的傳輸狀態畫到傳輸卡片上。</summary>
+    private void RenderTransferCard()
+    {
+        if (_selectedPeer is not { TransferVisible: true } peer)
+        {
+            FileTransferCard.Visibility = Visibility.Collapsed;
+            return;
+        }
+
+        FileTransferNameText.Text = peer.TransferName;
+        FileTransferStatusText.Text = peer.TransferStatus;
+        FileTransferPercentText.Text = peer.TransferPercentText;
+        FileTransferProgressBar.Value = peer.TransferPercent;
+
+        var done = !peer.TransferInProgress && peer.LastReceivedRecord is { } record;
+        FileTransferIcon.Kind = done ? PackIconKind.CheckCircle : PackIconKind.SwapVertical;
+        FileTransferProgressBar.Visibility = done ? Visibility.Collapsed : Visibility.Visible;
+        FileTransferDoneActions.Visibility = done ? Visibility.Visible : Visibility.Collapsed;
+        CancelFileTransferButton.Visibility = done ? Visibility.Collapsed : Visibility.Visible;
+        DismissFileTransferButton.Visibility = done ? Visibility.Visible : Visibility.Collapsed;
+        if (done)
+        {
+            OpenReceivedButtonText.Text = peer.LastReceivedRecord!.IsFolder ? "開啟資料夾" : "開啟檔案";
+            ShowReceivedInFolderButton.Visibility = peer.LastReceivedRecord.IsFolder ? Visibility.Collapsed : Visibility.Visible;
+        }
+
         FileTransferCard.Visibility = Visibility.Visible;
     }
 
-    private void HideFileTransferPanel()
-    {
-        _lastReceivedRecord = null;
-        FileTransferCard.Visibility = Visibility.Collapsed;
-        ClearTransferProgressIndicators();
-    }
-
-    /// <summary>傳輸結束後收起工作列進度與系統匣提示。</summary>
+    /// <summary>沒有任何裝置在傳輸時,收起工作列進度與系統匣提示。</summary>
     private void ClearTransferProgressIndicators()
     {
+        if (_connectedPeers.Any(p => p.TransferInProgress))
+        {
+            return;
+        }
+
         TaskbarInfo.ProgressState = System.Windows.Shell.TaskbarItemProgressState.None;
         TaskbarInfo.ProgressValue = 0;
         ((App)Application.Current).SetTrayStatus(null);
     }
 
-    /// <summary>最近一次「接收成功」的紀錄;傳輸卡片在完成狀態時的「開啟」/「在資料夾中顯示」就是作用在它上面。</summary>
-    private TransferRecord? _lastReceivedRecord;
-
-    /// <summary>傳輸結束時呼叫:寫入傳輸紀錄;接收成功的話把傳輸卡片切成「完成」狀態並提供開啟按鈕,
+    /// <summary>傳輸結束時呼叫:寫入傳輸紀錄;接收成功的話把該裝置的傳輸卡片切成「完成」狀態並提供開啟按鈕,
     /// 其他情況(傳送完成、失敗、取消)收起卡片,結果由 Snackbar 告知。</summary>
-    private void CompleteTransfer(TransferRecord record)
+    private void CompleteTransfer(ConnectedPeerItem? peer, TransferRecord record)
     {
         _transferHistory.Insert(0, record);
-        ClearTransferProgressIndicators();
-        FileTransferPercentText.Text = string.Empty;
-
-        if (!record.CanOpen)
+        if (peer == null)
         {
-            HideFileTransferPanel();
+            ClearTransferProgressIndicators();
             return;
         }
 
-        _lastReceivedRecord = record;
-        FileTransferNameText.Text = record.Name;
-        FileTransferIcon.Kind = PackIconKind.CheckCircle;
-        FileTransferProgressBar.Visibility = Visibility.Collapsed;
-        FileTransferStatusText.Text = $"已儲存到 {(record.IsFolder ? record.SavedPath : Path.GetDirectoryName(record.SavedPath))}";
-        OpenReceivedButtonText.Text = record.IsFolder ? "開啟資料夾" : "開啟檔案";
-        ShowReceivedInFolderButton.Visibility = record.IsFolder ? Visibility.Collapsed : Visibility.Visible;
-        FileTransferDoneActions.Visibility = Visibility.Visible;
-        CancelFileTransferButton.Visibility = Visibility.Collapsed;
-        DismissFileTransferButton.Visibility = Visibility.Visible;
-        FileTransferCard.Visibility = Visibility.Visible;
+        peer.TransferInProgress = false;
+        peer.ChipStatus = null;
+        peer.TransferPercentText = string.Empty;
+        ClearTransferProgressIndicators();
+
+        if (!record.CanOpen)
+        {
+            HideFileTransferPanel(peer);
+            return;
+        }
+
+        peer.LastReceivedRecord = record;
+        peer.TransferVisible = true;
+        peer.TransferName = record.Name;
+        peer.TransferStatus = $"已儲存到 {(record.IsFolder ? record.SavedPath : Path.GetDirectoryName(record.SavedPath))}";
+        RenderTransferCardIfSelected(peer);
     }
 
-    private void DismissFileTransferButton_Click(object sender, RoutedEventArgs e) => HideFileTransferPanel();
+    private void DismissFileTransferButton_Click(object sender, RoutedEventArgs e)
+    {
+        if (_selectedPeer is { } peer)
+        {
+            HideFileTransferPanel(peer);
+        }
+    }
 
     private void OpenReceivedButton_Click(object sender, RoutedEventArgs e)
     {
-        if (_lastReceivedRecord != null)
+        if (_selectedPeer?.LastReceivedRecord is { } record)
         {
-            OpenTransferRecord(_lastReceivedRecord);
+            OpenTransferRecord(record);
         }
     }
 
     private void ShowReceivedInFolderButton_Click(object sender, RoutedEventArgs e)
     {
-        if (_lastReceivedRecord != null)
+        if (_selectedPeer?.LastReceivedRecord is { } record)
         {
-            ShowTransferRecordInFolder(_lastReceivedRecord);
+            ShowTransferRecordInFolder(record);
         }
     }
 
@@ -275,9 +333,13 @@ public partial class MainWindow
         Dispatcher.BeginInvoke(() =>
         {
             _connection.RespondToFileOffer(e.TransferId, true, _fileTransferSettings.DownloadFolder);
-            ShowFileTransferPanel(e.FileName, "接收中...");
-            ((App)Application.Current).ShowConnectionAlert(
-                $"{ConnectedDeviceNameText.Text} 正在傳送檔案給你", e.FileName);
+            if (FindPeerItem(sender) is not { } peer)
+            {
+                return;
+            }
+
+            ShowFileTransferPanel(peer, e.FileName, "接收中...");
+            ((App)Application.Current).ShowConnectionAlert($"{peer.Name} 正在傳送檔案給你", e.FileName);
         });
     }
 
@@ -287,10 +349,15 @@ public partial class MainWindow
         Dispatcher.BeginInvoke(() =>
         {
             _connection.RespondToFolderOffer(e.TransferId, true, _fileTransferSettings.DownloadFolder);
+            if (FindPeerItem(sender) is not { } peer)
+            {
+                return;
+            }
+
             var panelName = e.IsBatch ? $"{e.TotalEntries} 個檔案" : e.FolderName;
-            ShowFileTransferPanel(panelName, $"接收中...(共 {e.TotalEntries} 個檔案)");
+            ShowFileTransferPanel(peer, panelName, $"接收中...(共 {e.TotalEntries} 個檔案)");
             ((App)Application.Current).ShowConnectionAlert(
-                $"{ConnectedDeviceNameText.Text} 正在傳送{(e.IsBatch ? "多個檔案" : "資料夾")}給你", panelName);
+                $"{peer.Name} 正在傳送{(e.IsBatch ? "多個檔案" : "資料夾")}給你", panelName);
         });
     }
 
@@ -298,24 +365,32 @@ public partial class MainWindow
     {
         Dispatcher.BeginInvoke(() =>
         {
+            if (FindPeerItem(sender) is not { TransferInProgress: true } peer)
+            {
+                return;
+            }
+
             // 資料夾/多檔案傳輸以整批的累計位元組計算,百分比、速度、剩餘時間才是「整個傳輸」的。
             var isFolder = e.FolderTransferId != null && e.TotalEntries is not null;
             var transferred = isFolder ? e.FolderBytesTransferred ?? e.BytesTransferred : e.BytesTransferred;
             var total = isFolder ? e.FolderTotalBytes ?? e.TotalBytes : e.TotalBytes;
-            var snapshot = _transferRate.Update(transferred, total);
+            var snapshot = peer.Rate.Update(transferred, total);
             var fraction = total > 0 ? snapshot.Fraction : 1;
+            var percent = (int)Math.Floor(fraction * 100);
 
-            FileTransferProgressBar.Value = fraction * 100;
-            FileTransferPercentText.Text = $"{(int)Math.Floor(fraction * 100)}%";
+            peer.TransferPercent = fraction * 100;
+            peer.TransferPercentText = $"{percent}%";
             var bytesText = $"{FormatBytes(transferred)} / {FormatBytes(total)}・{snapshot.RateText}";
-            FileTransferStatusText.Text = isFolder
+            peer.TransferStatus = isFolder
                 ? $"第 {e.EntryIndex}/{e.TotalEntries} 個檔案:{e.FileName}\n{bytesText}"
                 : bytesText;
+            var verb = e.Direction == FileTransferDirection.Receiving ? "接收中" : "傳送中";
+            peer.ChipStatus = $"{verb} {percent}%";
+            RenderTransferCardIfSelected(peer);
 
             TaskbarInfo.ProgressState = System.Windows.Shell.TaskbarItemProgressState.Normal;
             TaskbarInfo.ProgressValue = fraction;
-            var verb = e.Direction == FileTransferDirection.Receiving ? "接收中" : "傳送中";
-            ((App)Application.Current).SetTrayStatus($"{verb} {(int)Math.Floor(fraction * 100)}%・{FileTransferNameText.Text}");
+            ((App)Application.Current).SetTrayStatus($"{verb} {percent}%・{peer.TransferName}");
         });
     }
 
@@ -323,24 +398,27 @@ public partial class MainWindow
     {
         Dispatcher.BeginInvoke(() =>
         {
-            CompleteTransfer(new TransferRecord
+            var peer = FindPeerItem(sender);
+            var peerName = peer?.Name ?? (sender as PeerSession)?.RemoteName ?? string.Empty;
+            CompleteTransfer(peer, new TransferRecord
             {
                 Direction = e.Direction,
                 Reason = e.Reason,
                 Name = e.FileName,
                 SavedPath = e.SavedFilePath,
                 IsFolder = false,
+                PeerName = peerName,
             });
 
             var message = e.Reason switch
             {
                 FileTransferEndReason.Completed when e.Direction == FileTransferDirection.Receiving =>
-                    $"已收到檔案「{e.FileName}」,已儲存到 {_fileTransferSettings.DownloadFolder}。",
-                FileTransferEndReason.Completed => $"「{e.FileName}」傳送完成。",
-                FileTransferEndReason.Rejected => $"對方拒絕接收「{e.FileName}」。",
+                    $"已收到 {peerName} 傳來的「{e.FileName}」,已儲存到 {_fileTransferSettings.DownloadFolder}。",
+                FileTransferEndReason.Completed => $"「{e.FileName}」已傳送給 {peerName}。",
+                FileTransferEndReason.Rejected => $"{peerName} 拒絕接收「{e.FileName}」。",
                 FileTransferEndReason.Cancelled => $"已取消「{e.FileName}」的傳輸。",
-                FileTransferEndReason.CancelledByRemote => $"對方取消了「{e.FileName}」的傳輸。",
-                FileTransferEndReason.ConnectionClosed => $"連線已中斷,「{e.FileName}」的傳輸已中止。",
+                FileTransferEndReason.CancelledByRemote => $"{peerName} 取消了「{e.FileName}」的傳輸。",
+                FileTransferEndReason.ConnectionClosed => $"與 {peerName} 的連線已中斷,「{e.FileName}」的傳輸已中止。",
                 _ => $"「{e.FileName}」傳輸失敗。",
             };
 
@@ -354,36 +432,39 @@ public partial class MainWindow
     {
         Dispatcher.BeginInvoke(() =>
         {
-            CompleteTransfer(new TransferRecord
+            var peer = FindPeerItem(sender);
+            var peerName = peer?.Name ?? (sender as PeerSession)?.RemoteName ?? string.Empty;
+            CompleteTransfer(peer, new TransferRecord
             {
                 Direction = e.Direction,
                 Reason = e.Reason,
                 Name = e.IsBatch ? $"{e.EntryCount} 個檔案" : e.FolderName,
                 SavedPath = e.SavedFolderPath,
                 IsFolder = true,
+                PeerName = peerName,
             });
 
             var message = e.IsBatch
                 ? e.Reason switch
                 {
                     FileTransferEndReason.Completed when e.Direction == FileTransferDirection.Receiving =>
-                        $"已收到 {e.EntryCount} 個檔案,已儲存到 {_fileTransferSettings.DownloadFolder}。",
-                    FileTransferEndReason.Completed => $"{e.EntryCount} 個檔案傳送完成。",
-                    FileTransferEndReason.Rejected => "對方拒絕接收這些檔案。",
+                        $"已收到 {peerName} 傳來的 {e.EntryCount} 個檔案,已儲存到 {_fileTransferSettings.DownloadFolder}。",
+                    FileTransferEndReason.Completed => $"{e.EntryCount} 個檔案已傳送給 {peerName}。",
+                    FileTransferEndReason.Rejected => $"{peerName} 拒絕接收這些檔案。",
                     FileTransferEndReason.Cancelled => $"已取消傳輸(已完成 {e.EntryCount} 個檔案)。",
-                    FileTransferEndReason.CancelledByRemote => $"對方取消了傳輸(已完成 {e.EntryCount} 個檔案)。",
-                    FileTransferEndReason.ConnectionClosed => $"連線已中斷,傳輸已中止(已完成 {e.EntryCount} 個檔案)。",
+                    FileTransferEndReason.CancelledByRemote => $"{peerName} 取消了傳輸(已完成 {e.EntryCount} 個檔案)。",
+                    FileTransferEndReason.ConnectionClosed => $"與 {peerName} 的連線已中斷,傳輸已中止(已完成 {e.EntryCount} 個檔案)。",
                     _ => $"傳輸失敗(已完成 {e.EntryCount} 個檔案)。",
                 }
                 : e.Reason switch
                 {
                     FileTransferEndReason.Completed when e.Direction == FileTransferDirection.Receiving =>
-                        $"已收到資料夾「{e.FolderName}」(共 {e.EntryCount} 個檔案),已儲存到 {_fileTransferSettings.DownloadFolder}。",
-                    FileTransferEndReason.Completed => $"資料夾「{e.FolderName}」傳送完成(共 {e.EntryCount} 個檔案)。",
-                    FileTransferEndReason.Rejected => $"對方拒絕接收資料夾「{e.FolderName}」。",
+                        $"已收到 {peerName} 傳來的資料夾「{e.FolderName}」(共 {e.EntryCount} 個檔案),已儲存到 {_fileTransferSettings.DownloadFolder}。",
+                    FileTransferEndReason.Completed => $"資料夾「{e.FolderName}」已傳送給 {peerName}(共 {e.EntryCount} 個檔案)。",
+                    FileTransferEndReason.Rejected => $"{peerName} 拒絕接收資料夾「{e.FolderName}」。",
                     FileTransferEndReason.Cancelled => $"已取消資料夾「{e.FolderName}」的傳輸(已完成 {e.EntryCount} 個檔案)。",
-                    FileTransferEndReason.CancelledByRemote => $"對方取消了資料夾「{e.FolderName}」的傳輸(已完成 {e.EntryCount} 個檔案)。",
-                    FileTransferEndReason.ConnectionClosed => $"連線已中斷,資料夾「{e.FolderName}」的傳輸已中止(已完成 {e.EntryCount} 個檔案)。",
+                    FileTransferEndReason.CancelledByRemote => $"{peerName} 取消了資料夾「{e.FolderName}」的傳輸(已完成 {e.EntryCount} 個檔案)。",
+                    FileTransferEndReason.ConnectionClosed => $"與 {peerName} 的連線已中斷,資料夾「{e.FolderName}」的傳輸已中止(已完成 {e.EntryCount} 個檔案)。",
                     _ => $"資料夾「{e.FolderName}」傳輸失敗(已完成 {e.EntryCount} 個檔案)。",
                 };
 

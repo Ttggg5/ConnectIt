@@ -98,6 +98,10 @@ public sealed class ScreenMirrorController : IDisposable
 
     private readonly ConnectionService _connection;
     private readonly object _sync = new();
+
+    // 螢幕鏡像同一時間只跟一台裝置進行(可以同時連線多台,但只有這一台在鏡像):
+    // 目前(或最近一次)鏡像工作階段的對象。回到 Idle 時不清掉,讓結束時送出的 screen-stop 還能送到對的裝置。
+    private PeerSession? _peer;
     private readonly ScreenInputInjector _injector = new();
 
     private ScreenMirrorStatus _status = ScreenMirrorStatus.Idle;
@@ -134,9 +138,21 @@ public sealed class ScreenMirrorController : IDisposable
     public ScreenMirrorController(ConnectionService connection)
     {
         _connection = connection;
-        _connection.ScreenMessageReceived += (_, message) => HandleMessage(message);
-        _connection.ScreenFrameReceived += (_, payload) => HandleFrame(payload);
-        _connection.ScreenAudioReceived += (_, pcm) => HandleAudio(pcm);
+        _connection.ScreenMessageReceived += (sender, message) => HandleMessage((PeerSession)sender!, message);
+        _connection.ScreenFrameReceived += (sender, payload) =>
+        {
+            if (sender == _peer)
+            {
+                HandleFrame(payload);
+            }
+        };
+        _connection.ScreenAudioReceived += (sender, pcm) =>
+        {
+            if (sender == _peer)
+            {
+                HandleAudio(pcm);
+            }
+        };
         _ = RunAudioSenderAsync();
     }
 
@@ -165,17 +181,30 @@ public sealed class ScreenMirrorController : IDisposable
 
     // ===================== UI 操作 =====================
 
+    /// <summary>目前(或最近一次)螢幕鏡像的對象。</summary>
+    public PeerSession? Peer
+    {
+        get
+        {
+            lock (_sync)
+            {
+                return _peer;
+            }
+        }
+    }
+
     /// <summary>請對方分享他的螢幕給我看。</summary>
-    public void RequestViewPeer()
+    public void RequestViewPeer(PeerSession peer)
     {
         string id;
         lock (_sync)
         {
-            if (_status.Phase != ScreenMirrorPhase.Idle || !_connection.IsConnected)
+            if (_status.Phase != ScreenMirrorPhase.Idle || peer.IsClosed)
             {
                 return;
             }
 
+            _peer = peer;
             id = NewSessionId();
             SetStatus(new ScreenMirrorStatus(ScreenMirrorPhase.OutgoingRequest, id));
             StartTimeout(id, "對方沒有回應。對方可能還沒按下同意,或使用的是不支援螢幕鏡像的舊版 ConnectIt。");
@@ -186,16 +215,17 @@ public sealed class ScreenMirrorController : IDisposable
     }
 
     /// <summary>邀請對方觀看我的螢幕。</summary>
-    public void StartShareOffer(bool allowControl, bool shareAudio = false)
+    public void StartShareOffer(PeerSession peer, bool allowControl, bool shareAudio = false)
     {
         string id;
         lock (_sync)
         {
-            if (_status.Phase != ScreenMirrorPhase.Idle || !_connection.IsConnected)
+            if (_status.Phase != ScreenMirrorPhase.Idle || peer.IsClosed)
             {
                 return;
             }
 
+            _peer = peer;
             id = NewSessionId();
             _pendingOfferAllowControl = allowControl;
             _pendingOfferShareAudio = shareAudio;
@@ -404,12 +434,12 @@ public sealed class ScreenMirrorController : IDisposable
         });
     }
 
-    /// <summary>連線已經中斷(不論哪一方造成的):不能再送任何訊息,直接清理。</summary>
-    public void OnConnectionClosed()
+    /// <summary>某一條連線已經中斷(不論哪一方造成的):是鏡像中的那台的話,不能再送任何訊息,直接清理。</summary>
+    public void OnConnectionClosed(PeerSession session)
     {
         lock (_sync)
         {
-            if (_status.Phase == ScreenMirrorPhase.Idle)
+            if (_status.Phase == ScreenMirrorPhase.Idle || session != _peer)
             {
                 return;
             }
@@ -422,11 +452,35 @@ public sealed class ScreenMirrorController : IDisposable
 
     // ===================== 收到對方的訊息 =====================
 
-    private void HandleMessage(ScreenMessage message)
+    private void HandleMessage(PeerSession sender, ScreenMessage message)
     {
         if (message.SessionId is not { } id)
         {
             return;
+        }
+
+        if (message.Type is ScreenMessage.Request or ScreenMessage.Offer)
+        {
+            bool busy;
+            lock (_sync)
+            {
+                busy = _status.Phase != ScreenMirrorPhase.Idle;
+                if (!busy)
+                {
+                    _peer = sender;
+                }
+            }
+
+            if (busy)
+            {
+                // 已經在跟另一台(或同一台)進行螢幕鏡像,直接回忙碌。
+                Send(new ScreenMessage { Type = ScreenMessage.Reject, SessionId = id, Reason = ScreenRejectReason.Busy }, sender);
+                return;
+            }
+        }
+        else if (sender != Peer)
+        {
+            return; // 不是鏡像對象送來的訊息(例如舊工作階段的殘留),忽略。
         }
 
         switch (message.Type)
@@ -715,6 +769,12 @@ public sealed class ScreenMirrorController : IDisposable
     /// </summary>
     private async Task RunSenderAsync(string id, int announcedWidth, int announcedHeight, CancellationToken token)
     {
+        var peer = Peer;
+        if (peer == null)
+        {
+            return;
+        }
+
         using var capture = new ScreenCaptureService();
         (double X, double Y)? reportedCursor = null;
         long cursorReportedAt = 0;
@@ -780,7 +840,7 @@ public sealed class ScreenMirrorController : IDisposable
 
                     var seq = Volatile.Read(ref _lastSentSeq) + 1;
                     BinaryPrimitives.WriteInt32BigEndian(encoded.Buffer, seq);
-                    await _connection.SendScreenFrameAsync(encoded.Buffer.AsMemory(0, encoded.Length), token).ConfigureAwait(false);
+                    await peer.SendScreenFrameAsync(encoded.Buffer.AsMemory(0, encoded.Length), token).ConfigureAwait(false);
                     Volatile.Write(ref _lastSentSeq, seq);
                 }
 
@@ -831,7 +891,7 @@ public sealed class ScreenMirrorController : IDisposable
         Y = cursor?.Y,
         AudioSampleRate = sharing.ShareAudio ? _audioCapture?.SampleRate : null,
         AudioChannels = sharing.ShareAudio ? ScreenAudioCapture.OutputChannels : null,
-    });
+    }, Peer);
 
     // ===================== 聲音 =====================
 
@@ -882,7 +942,10 @@ public sealed class ScreenMirrorController : IDisposable
 
             try
             {
-                await _connection.SendScreenAudioAsync(pcm).ConfigureAwait(false);
+                if (Peer is { } audioPeer)
+                {
+                    await audioPeer.SendScreenAudioAsync(pcm).ConfigureAwait(false);
+                }
             }
             catch
             {
@@ -990,13 +1053,19 @@ public sealed class ScreenMirrorController : IDisposable
 
     private void RaiseStatusChanged() => StatusChanged?.Invoke(this, Status);
 
-    private void Send(ScreenMessage message) => _ = SafeSendAsync(message);
+    /// <summary>送給 <paramref name="target"/>,沒指定就送給目前鏡像的對象。</summary>
+    private void Send(ScreenMessage message, PeerSession? target = null) => _ = SafeSendAsync(message, target ?? Peer);
 
-    private async Task SafeSendAsync(ScreenMessage message)
+    private static async Task SafeSendAsync(ScreenMessage message, PeerSession? target)
     {
+        if (target == null)
+        {
+            return;
+        }
+
         try
         {
-            await _connection.SendScreenMessageAsync(message).ConfigureAwait(false);
+            await target.SendScreenMessageAsync(message).ConfigureAwait(false);
         }
         catch
         {
