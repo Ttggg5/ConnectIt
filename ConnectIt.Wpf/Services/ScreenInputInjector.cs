@@ -216,6 +216,13 @@ public sealed class ScreenInputInjector
             "CapsLock" => 0x14,
             "ContextMenu" => 0x5D,
             "PrintScreen" => 0x2C,
+            RemoteKeys.VolumeMute => 0xAD,
+            RemoteKeys.VolumeDown => 0xAE,
+            RemoteKeys.VolumeUp => 0xAF,
+            RemoteKeys.Next => 0xB0,
+            RemoteKeys.Previous => 0xB1,
+            RemoteKeys.Stop => 0xB2,
+            RemoteKeys.PlayPause => 0xB3,
             _ => null,
         };
     }

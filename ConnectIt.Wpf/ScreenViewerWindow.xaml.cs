@@ -67,6 +67,7 @@ public partial class ScreenViewerWindow : Window
         ControlStateIcon.Kind = CanControl ? PackIconKind.CursorDefaultClick : PackIconKind.Eye;
         ControlStateText.Text = CanControl ? "可以操控" : "僅觀看";
         AndroidNavPanel.Visibility = CanControl && IsRemoteAndroid ? Visibility.Visible : Visibility.Collapsed;
+        ShortcutsButton.Visibility = CanControl ? Visibility.Visible : Visibility.Collapsed;
         ScreenImage.Cursor = CanControl ? Cursors.Arrow : Cursors.No;
         // 對方有分享聲音才顯示靜音鈕。
         MuteButton.Visibility = status.AudioSampleRate is > 0 ? Visibility.Visible : Visibility.Collapsed;
@@ -361,6 +362,51 @@ public partial class ScreenViewerWindow : Window
         _controller.SendInput(new ScreenMessage { Type = ScreenMessage.Input, Action = ScreenInputAction.Nav, Key = key });
 
     private void NavBackButton_Click(object sender, RoutedEventArgs e) => SendNav("back");
+
+    /// <summary>
+    /// 快捷鍵選單:很多組合鍵(Alt+Tab、Win、Ctrl+Alt…)在這個視窗裡按會被本機的 Windows 攔走,
+    /// 所以另外做成按鈕送給對方。媒體鍵兩種平台都能用,系統快捷鍵只有對方是電腦時才顯示。
+    /// </summary>
+    private void ShortcutsButton_Click(object sender, RoutedEventArgs e)
+    {
+        var menu = new System.Windows.Controls.ContextMenu { PlacementTarget = ShortcutsButton, Placement = System.Windows.Controls.Primitives.PlacementMode.Bottom };
+        void AddItems(IEnumerable<Models.RemoteShortcut> shortcuts)
+        {
+            foreach (var shortcut in shortcuts)
+            {
+                var item = new System.Windows.Controls.MenuItem
+                {
+                    Header = shortcut.Label,
+                    Icon = new PackIcon { Kind = shortcut.Icon },
+                };
+                var keys = shortcut.Keys;
+                item.Click += (_, _) => SendShortcut(keys);
+                menu.Items.Add(item);
+            }
+        }
+
+        AddItems(Models.RemoteShortcuts.Media);
+        if (!IsRemoteAndroid)
+        {
+            menu.Items.Add(new System.Windows.Controls.Separator());
+            AddItems(Models.RemoteShortcuts.System);
+        }
+
+        menu.IsOpen = true;
+    }
+
+    private void SendShortcut(string[] keys)
+    {
+        foreach (var key in keys)
+        {
+            SendKey(ScreenInputAction.KeyDown, key);
+        }
+
+        foreach (var key in keys.Reverse())
+        {
+            SendKey(ScreenInputAction.KeyUp, key);
+        }
+    }
 
     private void NavHomeButton_Click(object sender, RoutedEventArgs e) => SendNav("home");
 

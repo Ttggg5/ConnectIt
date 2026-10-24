@@ -37,6 +37,10 @@
                             <materialDesign:PackIcon Kind="SquareOutline" Width="18" Height="18"/>
                         </Button>
                     </StackPanel>
+                    <Button x:Name="ShortcutsButton" Style="{StaticResource Brand.Button.Icon.OnGradient}" Width="34" Height="34" Margin="0,0,4,0"
+                            ToolTip="媒體鍵與快捷鍵(Ctrl+C、Alt+Tab、Win…)" Click="ShortcutsButton_Click" Focusable="False" Visibility="Collapsed">
+                        <materialDesign:PackIcon Kind="KeyboardOutline" Width="18" Height="18"/>
+                    </Button>
                     <Button x:Name="MuteButton" Style="{StaticResource Brand.Button.Icon.OnGradient}" Width="34" Height="34" Margin="0,0,4,0"
                             ToolTip="靜音/取消靜音" Click="MuteButton_Click" Focusable="False" Visibility="Collapsed">
                         <materialDesign:PackIcon x:Name="MuteIcon" Kind="VolumeHigh" Width="18" Height="18"/>

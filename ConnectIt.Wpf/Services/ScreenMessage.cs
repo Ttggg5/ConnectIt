@@ -32,6 +32,14 @@ public sealed class ScreenMessage
     public const string Input = "screen-input";
     public const string Stop = "screen-stop";
 
+    // 遙控器(不用開螢幕鏡像,只送按鍵,見 RemoteControlController):控制端送 remote-request,受控端同意回
+    // remote-accept(帶 Platform),不同意回 remote-reject;之後控制端用 screen-input(key-down/key-up,
+    // SessionId 是遙控工作階段的)送按鍵,任一方送 remote-stop 結束。同一時間只有一個遙控工作階段。
+    public const string RemoteRequest = "remote-request";
+    public const string RemoteAccept = "remote-accept";
+    public const string RemoteReject = "remote-reject";
+    public const string RemoteStop = "remote-stop";
+
     /// <summary>同時允許幾張畫面還沒收到 screen-ack。</summary>
     public const int MaxFramesInFlight = 4;
 
@@ -112,6 +120,24 @@ public static class ScreenInputAction
     public const string KeyUp = "key-up";
     public const string Text = "text";
     public const string Nav = "nav";
+}
+
+/// <summary>
+/// 遙控器與螢幕鏡像快捷鍵列用到的按鍵名稱(網頁 KeyboardEvent.key 的標準命名),對應 Android 端 RemoteKeys。
+/// 媒體鍵與音量鍵在 Android 受控端不需要無障礙服務(用 AudioManager 送出)。
+/// </summary>
+public static class RemoteKeys
+{
+    public const string PlayPause = "MediaPlayPause";
+    public const string Next = "MediaTrackNext";
+    public const string Previous = "MediaTrackPrevious";
+    public const string Stop = "MediaStop";
+    public const string VolumeUp = "AudioVolumeUp";
+    public const string VolumeDown = "AudioVolumeDown";
+    public const string VolumeMute = "AudioVolumeMute";
+
+    public static bool IsMediaKey(string? key) =>
+        key is PlayPause or Next or Previous or Stop or VolumeUp or VolumeDown or VolumeMute;
 }
 
 public static class ScreenRejectReason
