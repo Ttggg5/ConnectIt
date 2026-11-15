@@ -134,6 +134,56 @@ public class SecureConnectionTests : IDisposable
     }
 
     [Fact]
+    public void Unattended_RequiresMasterSwitchAndPerDeviceFlag_AndPersists()
+    {
+        var path = Path.Combine(_tempDirectory, "trusted-unattended.json");
+        var trusted = new TrustedDevicesService(path);
+        trusted.Trust("abc", "我的手機", "device-1");
+        Assert.False(trusted.IsUnattendedAllowed("abc"));
+
+        // 只開個別裝置、沒開總開關:不生效。
+        trusted.SetAllowUnattended("ABC", true);
+        Assert.False(trusted.IsUnattendedAllowed("abc"));
+
+        trusted.SetUnattendedEnabled(true);
+        Assert.True(trusted.IsUnattendedAllowed("abc"));
+        Assert.False(trusted.IsUnattendedAllowed("def"));
+
+        var reloaded = new TrustedDevicesService(path);
+        Assert.True(reloaded.UnattendedEnabled);
+        Assert.True(reloaded.IsUnattendedAllowed("abc"));
+
+        // 關掉總開關立刻撤銷,但個別裝置的勾選保留。
+        reloaded.SetUnattendedEnabled(false);
+        Assert.False(reloaded.IsUnattendedAllowed("abc"));
+        Assert.True(reloaded.TrustedDevices.Single().AllowUnattended);
+    }
+
+    [Fact]
+    public void Unattended_KeptOnRename_ButNotWhenKeyChanges()
+    {
+        var path = Path.Combine(_tempDirectory, "trusted-rekey.json");
+        var trusted = new TrustedDevicesService(path);
+        trusted.SetUnattendedEnabled(true);
+        trusted.Trust("abc", "舊名字", "device-1");
+        trusted.SetAllowUnattended("abc", true);
+
+        var changes = 0;
+        trusted.Changed += (_, _) => changes++;
+
+        trusted.Trust("abc", "新名字", "device-1");
+        Assert.True(trusted.IsUnattendedAllowed("abc"));
+
+        // 同一個 DeviceId 換了金鑰:要重新允許,不能沿用。
+        trusted.Trust("def", "新名字", "device-1");
+        Assert.False(trusted.IsUnattendedAllowed("def"));
+        Assert.Equal(2, changes);
+
+        trusted.Untrust("def");
+        Assert.False(trusted.IsUnattendedAllowed("def"));
+    }
+
+    [Fact]
     public void Identity_IsPersistedAndReloaded()
     {
         var path = Path.Combine(_tempDirectory, "identity.bin");

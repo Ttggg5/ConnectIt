@@ -165,11 +165,12 @@ public partial class App : Application
     /// <summary>
     /// 通知使用者連線狀態的重要變化(對方傳來檔案/資料夾被自動接受、對方中斷連線),
     /// 不需要使用者手動確認的事件會靠這個系統匣氣泡提示曝光——尤其是視窗被隱藏到系統匣時。
-    /// 可在設定頁關閉(見 NotificationSettingsService),關閉後這裡直接不顯示。
+    /// 可在設定頁關閉(見 NotificationSettingsService),關閉後這裡直接不顯示;
+    /// <paramref name="always"/> 為 true 時(例如無人值守存取有人連入)不受這個設定影響,一定會顯示。
     /// </summary>
-    public void ShowConnectionAlert(string title, string message)
+    public void ShowConnectionAlert(string title, string message, bool always = false)
     {
-        if (!_notificationSettings.NotificationsEnabled)
+        if (!always && !_notificationSettings.NotificationsEnabled)
         {
             return;
         }

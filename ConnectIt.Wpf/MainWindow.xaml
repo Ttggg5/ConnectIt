@@ -1353,6 +1353,26 @@
                             </StackPanel>
                             <TextBlock Style="{StaticResource Brand.Text.Caption}" Margin="0,10,0,10"
                                        Text="信任的裝置送出連線請求時會自動接受,不再跳出確認視窗。只認裝置本身的加密金鑰,改名或冒名都不會被自動接受;舊版的信任紀錄需要重新配對一次。"/>
+
+                            <!-- 無人值守存取:總開關 + 每台裝置的「免確認操控」 -->
+                            <Border Background="{DynamicResource Brand.Brush.SurfaceVariant}" CornerRadius="12" Padding="12,10" Margin="0,0,0,10">
+                                <Grid>
+                                    <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
+                                    <StackPanel>
+                                        <StackPanel Orientation="Horizontal">
+                                            <materialDesign:PackIcon Kind="RemoteDesktop" Width="16" Height="16" VerticalAlignment="Center"
+                                                                      Foreground="{DynamicResource Brand.Brush.Primary}"/>
+                                            <TextBlock Text="無人值守存取" FontWeight="SemiBold" Margin="8,0,0,0" VerticalAlignment="Center"/>
+                                        </StackPanel>
+                                        <TextBlock Style="{StaticResource Brand.Text.Caption}" Margin="0,6,0,0" TextWrapping="Wrap"
+                                                   Text="開啟後,下方打開「免確認操控」的裝置可以直接觀看並操控這台電腦,不用有人在電腦前按同意。連入期間畫面上方會一直顯示提示條,可隨時中斷;關掉這個開關會立刻撤銷所有裝置的免確認授權。建議同時開啟「開機時自動啟動」。"/>
+                                    </StackPanel>
+                                    <ToggleButton x:Name="UnattendedAccessToggle" AutomationProperties.AutomationId="UnattendedAccessToggle"
+                                                  Grid.Column="1" Margin="12,0,0,0" VerticalAlignment="Top"
+                                                  Style="{StaticResource MaterialDesignSwitchToggleButton}"
+                                                  Click="UnattendedAccessToggle_Click"/>
+                                </Grid>
+                            </Border>
                             <TextBlock x:Name="TrustedDevicesEmptyText" Style="{StaticResource Brand.Text.Caption}" FontStyle="Italic"
                                        Text="目前沒有信任的裝置。收到連線請求時勾選「信任此裝置」即可加入。"/>
                             <ItemsControl x:Name="TrustedDevicesItemsControl">
@@ -1364,11 +1384,19 @@
                                                     <ColumnDefinition Width="Auto"/>
                                                     <ColumnDefinition Width="*"/>
                                                     <ColumnDefinition Width="Auto"/>
+                                                    <ColumnDefinition Width="Auto"/>
                                                 </Grid.ColumnDefinitions>
                                                 <materialDesign:PackIcon Kind="Devices" Width="16" Height="16" VerticalAlignment="Center"
                                                                           Foreground="{DynamicResource Brand.Brush.Primary}"/>
                                                 <TextBlock Grid.Column="1" Text="{Binding Name}" Margin="10,0" VerticalAlignment="Center" TextTrimming="CharacterEllipsis"/>
-                                                <Button Grid.Column="2" Tag="{Binding}" Click="UntrustDeviceButton_Click" ToolTip="取消信任"
+                                                <StackPanel Grid.Column="2" Orientation="Horizontal" VerticalAlignment="Center" Margin="0,0,6,0"
+                                                            ToolTip="允許這台裝置免確認觀看並操控這台電腦(需開啟上方的「無人值守存取」)">
+                                                    <TextBlock Text="免確認操控" Style="{StaticResource Brand.Text.Caption}" VerticalAlignment="Center" Margin="0,0,6,0"/>
+                                                    <ToggleButton Tag="{Binding}" IsChecked="{Binding AllowUnattended, Mode=OneWay}"
+                                                                  Style="{StaticResource MaterialDesignSwitchToggleButton}"
+                                                                  Click="AllowUnattendedToggle_Click"/>
+                                                </StackPanel>
+                                                <Button Grid.Column="3" Tag="{Binding}" Click="UntrustDeviceButton_Click" ToolTip="取消信任"
                                                         Style="{StaticResource Brand.Button.Icon}" Width="30" Height="30">
                                                     <materialDesign:PackIcon Kind="Close" Width="15" Height="15"/>
                                                 </Button>

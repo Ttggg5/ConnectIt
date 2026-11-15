@@ -6,6 +6,7 @@ using System.Windows.Media.Animation;
 using System.Windows.Threading;
 using ConnectIt.Wpf.Models;
 using ConnectIt.Wpf.Services;
+using MaterialDesignThemes.Wpf;
 using Microsoft.Win32;
 
 namespace ConnectIt.Wpf;
@@ -311,6 +312,7 @@ public partial class MainWindow
 
     private void RefreshTrustedDevicesList()
     {
+        UnattendedAccessToggle.IsChecked = _trustedDevices.UnattendedEnabled;
         TrustedDevicesItemsControl.ItemsSource = _trustedDevices.TrustedDevices.OrderBy(device => device.Name, StringComparer.OrdinalIgnoreCase).ToList();
         TrustedDevicesEmptyText.Visibility = _trustedDevices.TrustedDevices.Count == 0 ? Visibility.Visible : Visibility.Collapsed;
     }
@@ -324,6 +326,74 @@ public partial class MainWindow
 
         _trustedDevices.Untrust(device.Fingerprint);
         RefreshTrustedDevicesList();
+    }
+
+    // ===================== 無人值守存取 =====================
+
+    /// <summary>總開關:打開前先講清楚會發生什麼事並要求確認;關掉立刻生效(進行中的免確認連線會被中斷)。</summary>
+    private async void UnattendedAccessToggle_Click(object sender, RoutedEventArgs e)
+    {
+        var wantEnabled = UnattendedAccessToggle.IsChecked == true;
+        UnattendedAccessToggle.IsChecked = _trustedDevices.UnattendedEnabled;
+        if (!wantEnabled)
+        {
+            _trustedDevices.SetUnattendedEnabled(false);
+            RefreshTrustedDevicesList();
+            AppendLog("已關閉無人值守存取。");
+            return;
+        }
+
+        if (DialogHost.IsDialogOpen(RootDialogIdentifier) || !await ConfirmEnableUnattendedAsync())
+        {
+            return;
+        }
+
+        _trustedDevices.SetUnattendedEnabled(true);
+        RefreshTrustedDevicesList();
+        AppendLog("已開啟無人值守存取。");
+        if (!_trustedDevices.TrustedDevices.Any(device => device.AllowUnattended))
+        {
+            MainSnackbar.MessageQueue?.Enqueue("已開啟。還要在下方替想要免確認連入的裝置打開「免確認操控」。");
+        }
+    }
+
+    private void AllowUnattendedToggle_Click(object sender, RoutedEventArgs e)
+    {
+        if (sender is not System.Windows.Controls.Primitives.ToggleButton { Tag: TrustedDevice device } toggle)
+        {
+            return;
+        }
+
+        _trustedDevices.SetAllowUnattended(device.Fingerprint, toggle.IsChecked == true);
+        RefreshTrustedDevicesList();
+        if (toggle.IsChecked == true && !_trustedDevices.UnattendedEnabled)
+        {
+            MainSnackbar.MessageQueue?.Enqueue("還要打開上方的「無人值守存取」總開關才會生效。");
+        }
+    }
+
+    private Task<bool> ConfirmEnableUnattendedAsync()
+    {
+        var panel = BuildScreenMirrorDialogHeader(PackIconKind.RemoteDesktop, "無人值守存取", "允許免確認遠端操控?",
+            "開啟後,你允許的信任裝置可以隨時觀看這台電腦的螢幕、操作滑鼠與鍵盤,不需要有人在電腦前按同意。"
+            + "連入期間畫面上方會一直顯示提示條,系統匣也會通知;你可以隨時按「中斷」,或回到這裡關閉開關撤銷授權。"
+            + "只有在你確定這些裝置都是你自己的、或你完全信任的人時才開啟。");
+        var (cancel, confirm) = AddDialogButtons(panel, "取消", "開啟");
+        var tcs = new TaskCompletionSource<bool>();
+        cancel.Click += (_, _) =>
+        {
+            DialogHost.Close(RootDialogIdentifier);
+            tcs.TrySetResult(false);
+        };
+        confirm.Click += (_, _) =>
+        {
+            DialogHost.Close(RootDialogIdentifier);
+            tcs.TrySetResult(true);
+        };
+
+        _ = DialogHost.Show(WrapInDialogCard(panel), RootDialogIdentifier);
+        cancel.Focus();
+        return tcs.Task;
     }
 
     // ===================== 進階:快速搜尋秒數 =====================

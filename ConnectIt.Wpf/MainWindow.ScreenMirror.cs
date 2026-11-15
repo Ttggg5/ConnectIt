@@ -20,6 +20,12 @@ public partial class MainWindow
     private ScreenMirrorStatus _lastScreenMirrorStatus = ScreenMirrorStatus.Idle;
     private bool _suppressAllowControlEvent;
 
+    /// <summary>無人值守存取(免確認)自動同意的那個工作階段;撤銷授權時只強制中斷這種的。</summary>
+    private string? _unattendedSessionId;
+
+    /// <summary>分享螢幕期間浮在最上層的提示條,見 <see cref="ScreenSharingIndicatorWindow"/>。</summary>
+    private ScreenSharingIndicatorWindow? _sharingIndicator;
+
     private ScreenMirrorController ScreenMirror => _screenMirror ??= CreateScreenMirror();
 
     private ScreenMirrorController CreateScreenMirror()
@@ -38,9 +44,11 @@ public partial class MainWindow
     private void InitializeScreenMirror()
     {
         _ = ScreenMirror;
+        _trustedDevices.Changed += (_, _) => EnforceUnattendedRevocation();
         Closed += (_, _) =>
         {
             _screenViewerWindow?.CloseFromController();
+            _sharingIndicator?.Close();
             _screenMirror?.Dispose();
         };
     }
@@ -137,6 +145,7 @@ public partial class MainWindow
 
         CloseStaleScreenMirrorDialog(status);
         UpdateScreenViewerWindow(status);
+        UpdateSharingIndicator(status);
 
         if (status.Phase != previous.Phase || status.SessionId != previous.SessionId)
         {
@@ -158,6 +167,11 @@ public partial class MainWindow
                     $"正在等待「{peerName}」接受", "對方接受後就會開始分享你的主螢幕。", () => ScreenMirror.CancelOutgoing()));
                 break;
             case ScreenMirrorPhase.IncomingRequest:
+                if (TryAcceptUnattended(status, peerName))
+                {
+                    break;
+                }
+
                 ((App)Application.Current).ShowMainWindow();
                 ((App)Application.Current).ShowConnectionAlert("螢幕鏡像", $"{peerName} 想要觀看你的螢幕。");
                 ShowIncomingScreenRequestDialog(status, peerName);
@@ -169,7 +183,7 @@ public partial class MainWindow
                 break;
             case ScreenMirrorPhase.Sharing:
                 AppendLog($"開始分享螢幕給 {peerName}。");
-                ((App)Application.Current).SetTrayStatus("正在分享螢幕");
+                ((App)Application.Current).SetTrayStatus($"{peerName} 正在連線這台電腦");
                 break;
             case ScreenMirrorPhase.Viewing:
                 AppendLog($"開始觀看 {peerName} 的螢幕。");
@@ -178,6 +192,74 @@ public partial class MainWindow
                 ((App)Application.Current).SetTrayStatus(null);
                 break;
         }
+
+        if (status.Phase == ScreenMirrorPhase.Idle)
+        {
+            _unattendedSessionId = null;
+        }
+    }
+
+    /// <summary>
+    /// 無人值守存取:這台電腦的主人事先在設定頁開了總開關、也允許了這台裝置,就直接同意觀看並允許操控,
+    /// 不跳確認對話框(也不把主視窗叫到前面)。改用一定會出現的系統匣通知 + 置頂提示條讓主人知道。
+    /// </summary>
+    private bool TryAcceptUnattended(ScreenMirrorStatus status, string peerName)
+    {
+        if (ScreenMirror.Peer is not { } peer || !_trustedDevices.IsUnattendedAllowed(peer.RemoteFingerprint))
+        {
+            return false;
+        }
+
+        _unattendedSessionId = status.SessionId;
+        AppendLog($"無人值守存取:已自動同意「{peerName}」觀看並操控這台電腦。");
+        ((App)Application.Current).ShowConnectionAlert("無人值守存取", $"{peerName} 已連入並可以操控這台電腦。", always: true);
+        ScreenMirror.RespondToIncomingRequest(true, allowControl: true, shareAudio: true);
+        return true;
+    }
+
+    /// <summary>信任清單/無人值守設定變了:正在進行的免確認工作階段如果已經不再被允許,立刻中斷。</summary>
+    private void EnforceUnattendedRevocation()
+    {
+        if (_unattendedSessionId is not { } sessionId)
+        {
+            return;
+        }
+
+        var status = ScreenMirror.Status;
+        if (status.SessionId != sessionId || status.Phase != ScreenMirrorPhase.Sharing)
+        {
+            return;
+        }
+
+        if (ScreenMirror.Peer is { } peer && _trustedDevices.IsUnattendedAllowed(peer.RemoteFingerprint))
+        {
+            return;
+        }
+
+        AppendLog($"已撤銷無人值守存取,中斷與 {ScreenMirrorPeerName} 的螢幕分享。");
+        MainSnackbar.MessageQueue?.Enqueue("已撤銷無人值守存取,目前的遠端操控已中斷。");
+        ScreenMirror.Stop();
+    }
+
+    /// <summary>分享中顯示(並隨允許操控的切換更新)置頂提示條,其他狀態一律關掉。</summary>
+    private void UpdateSharingIndicator(ScreenMirrorStatus status)
+    {
+        if (status.Phase != ScreenMirrorPhase.Sharing)
+        {
+            _sharingIndicator?.Close();
+            _sharingIndicator = null;
+            return;
+        }
+
+        if (_sharingIndicator == null)
+        {
+            _sharingIndicator = new ScreenSharingIndicatorWindow(
+                onStop: () => ScreenMirror.Stop(),
+                onOpenMain: () => ((App)Application.Current).ShowMainWindow());
+            _sharingIndicator.Show();
+        }
+
+        _sharingIndicator.Update(ScreenMirrorPeerName, status.AllowControl, status.SessionId == _unattendedSessionId);
     }
 
     private void UpdateScreenViewerWindow(ScreenMirrorStatus status)
